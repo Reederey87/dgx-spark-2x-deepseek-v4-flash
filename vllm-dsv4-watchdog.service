@@ -1,0 +1,6 @@
+[Unit]
+Description=vLLM DSv4 head inference watchdog (restarts head when /health lies)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash %h/dgx-cluster/watchdog.sh

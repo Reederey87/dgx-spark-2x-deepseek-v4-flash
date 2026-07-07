@@ -1,0 +1,27 @@
+dgx-spark-2x-deepseek-v4-flash
+Copyright 2026 the dgx-spark-2x-deepseek-v4-flash contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This project is deployment/orchestration tooling. It does NOT redistribute the
+model weights, the serving container image, or the upstream vLLM/kernel source
+it builds on — those are pulled at build time from their own repositories, each
+under its own license. This project orchestrates and documents them.
+
+Attributed upstreams (see CREDITS.md for URLs and details):
+
+  - vLLM                         (Apache-2.0)   — the inference engine
+  - DeepSeek-V4-Flash-DSpark     — model weights, by DeepSeek AI, under the
+                                   license stated on its Hugging Face model card
+  - tonyd2wild                   — the 2x-DGX-Spark NVFP4/DSpark serving recipe
+                                   this kit vendors and pins (docker-compose)
+  - drowzeys ("Keys")            — the DSpark concurrency patch, nvfp4_ds_mla KV,
+                                   and the sm121a sparse-MLA / dual-cache work
+  - aidendle94                   — the compiled GB10 (sm_121a) DeepGEMM and
+                                   sparse-MLA kernels shipped inside the image
+  - MiaAI-Lab                    — dual-Spark packaging and worker-first launch
+  - rafaelcaricio                — DSpark vLLM integration
+  - NVIDIA dgx-spark-playbooks   — the official "connect two Sparks" guidance
+
+These components are single-author, fast-moving, community efforts and are
+provided by their authors without warranty. Validate on your own hardware.
