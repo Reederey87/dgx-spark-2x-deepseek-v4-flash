@@ -1,26 +1,27 @@
 # Reasoning mode (thinking) — how to turn it on and read it
 
-DeepSeek-V4-Flash is a hybrid reason/chat model. This kit ships **non-think by default** (fast,
-greedy, `temp 0`) because the DSpark spec-decode recipe was tuned there and that is the garble-safe
-production profile. Reasoning is fully available — it is one flag away — but there are two sharp edges
-that cost a full day to trace, so they are documented here in detail.
+DeepSeek-V4-Flash is a hybrid reason/chat model. This kit ships **thinking ON by default** — it is the
+proven production profile the README Performance numbers were measured at. Non-think (fast, greedy,
+`temp 0`, byte-identical to the tuned recipe) is one flag away (`DSPARK_REASONING=off`). There are two
+sharp edges that cost a full day to trace, so they are documented here in detail.
 
 ## TL;DR
 
 - **The chain-of-thought comes back in `message.reasoning`, NOT `message.reasoning_content`.** On the
   vLLM build this kit uses (`0.21.1rc1.dev*`), `reasoning_content` is always `null`. If you probe the
   wrong field you will conclude — wrongly — that "reasoning doesn't work." It works.
-- **Two ways to turn it on:** flip the whole server to thinking-by-default (`DSPARK_REASONING=on`), or
-  leave the server non-think and opt in **per request** with `chat_template_kwargs`.
+- **The server thinks by default** (`DSPARK_REASONING=on`). Opt **out** per request with
+  `chat_template_kwargs: {"thinking": false}`, or set `DSPARK_REASONING=off` to flip the whole server.
 - **Budget your `max_tokens`.** Reasoning is spent *before* the answer; a small cap truncates the model
   mid-think and leaves `content` empty.
 
 ## Activate it
 
-### Option A — per request (no restart, server stays non-think)
+### Option A — per request (no restart)
 
-Send `chat_template_kwargs` on the request. Either `thinking` or `enable_thinking` works (the
-`deepseek_v4` tokenizer treats them as `thinking or enable_thinking`):
+Override the server default per request with `chat_template_kwargs` — `{"thinking": false}` to opt out,
+`{"thinking": true}` to force it. Either `thinking` or `enable_thinking` works (the `deepseek_v4`
+tokenizer treats them as `thinking or enable_thinking`):
 
 ```bash
 curl -s http://127.0.0.1:8000/v1/chat/completions -H 'Content-Type: application/json' -d '{
@@ -32,21 +33,21 @@ curl -s http://127.0.0.1:8000/v1/chat/completions -H 'Content-Type: application/
 ```
 
 `reasoning` holds the full CoT; `content` holds the clean final answer. Omit `chat_template_kwargs`
-(or send `{"thinking": false}`) for a direct non-think answer.
+and you get the server default (**thinking on**); send `{"thinking": false}` for a direct non-think answer.
 
-### Option B — server default (whole cluster reasons)
+### Option B — change the server default
 
-Set the toggle in `cluster.env` and restart the head:
+The toggle lives in `cluster.env` (shipped `on`); change it and restart the head:
 
 ```bash
 # cluster.env
-DSPARK_REASONING=on            # off (default) = non-think greedy
+DSPARK_REASONING=on            # on (default) = thinking; off = non-think greedy
 DSPARK_REASONING_EFFORT=high   # high | max
 ```
 
-The compose command then serves `--default-chat-template-kwargs '{"thinking":true,"reasoning_effort":"high"}'`
+At `on` the compose command serves `--default-chat-template-kwargs '{"thinking":true,"reasoning_effort":"high"}'`
 and flips `--override-generation-config` to the reasoning sampling profile (below). Every request reasons
-unless it opts out per-request with `{"thinking": false}`. Roll back by setting `off` and restarting.
+unless it opts out per-request with `{"thinking": false}`. Set `off` (then restart) for a non-think server.
 
 ## Sampling profile — thinking runs at temp 1.0, not greedy
 

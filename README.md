@@ -123,14 +123,14 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool. Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. `3` + probabilistic draft is the garble fix — **do not** revert to greedy `5`. See `docs/03`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
-| `DSPARK_REASONING` | `off` | Thinking mode. `off` = non-think greedy (`temp 0`). `on` = server-default thinking + `temp/top_p 1.0`. Read the CoT from **`message.reasoning`** (not `reasoning_content`). See `docs/06`. |
+| `DSPARK_REASONING` | `on` | Thinking mode (**production default** — what the Performance numbers were measured at). `on` = server-default thinking + `temp/top_p 1.0`; read the CoT from **`message.reasoning`** (not `reasoning_content`). `off` = non-think greedy (`temp 0`), fastest first token. **With `on`, give requests a generous `max_tokens` (≥1024)** or `content` comes back empty (the max_tokens trap). See `docs/06`. |
 | `NCCL_IB_HCA` | `rocep1s0f1,roceP2p1s0f1` | RDMA data path. Default = both RoCE twins (~200G). `bringup/04-run-nccl-bench.sh` A/B-tests this. |
 
 ---
 
 ## Performance
 
-Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` (2026-07-08, `GPU_MEMORY_UTILIZATION=0.80`, `DSPARK_REASONING=off`). These are **observations, not guarantees** — yours will vary with silicon, thermals, firmware, and context.
+Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` against the live production config (2026-07-08, `GPU_MEMORY_UTILIZATION=0.80`, `DSPARK_REASONING=on`). These are **observations, not guarantees** — yours will vary with silicon, thermals, firmware, and context.
 
 | Metric | Result |
 |---|---|
