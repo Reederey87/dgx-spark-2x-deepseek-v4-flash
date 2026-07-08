@@ -21,7 +21,7 @@ risk** are the most valuable.
 - **One source of truth.** Every tunable belongs in `cluster.env.example` with a
   comment. Don't hardcode a value in a script if it could be a variable.
 - **Pin upstreams.** New image/recipe dependencies must be pinned (digest or SHA)
-  and credited in `CREDITS.md` / `NOTICE`.
+  and attributed in `NOTICE`.
 - **Shell hygiene.** `set -euo pipefail`, `bash -n` clean, and prefer bounded
   waits (see `preflight.sh`'s `wait_for`) over unbounded loops.
 

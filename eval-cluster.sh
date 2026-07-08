@@ -125,7 +125,10 @@ PY
 import json, sys
 path, model, prompt_path = sys.argv[1], sys.argv[2], sys.argv[3]
 prompt = open(prompt_path, encoding="utf-8").read()
-json.dump({"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0, "max_tokens": 64}, open(path, "w", encoding="utf-8"))
+# max_tokens must clear the reasoning block: with DSPARK_REASONING=on the model spends the early
+# tokens in message.reasoning before emitting </think> + the answer into content. 64 truncates
+# mid-think (finish=length, empty content); 1024 lets both modes finish (non-think ~10 tok, think ~93).
+json.dump({"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0, "max_tokens": 1024}, open(path, "w", encoding="utf-8"))
 PY
   scp "$long_payload" "$CLUSTER_USER@$HEAD_HOST:/tmp/dspark-eval-longctx.json" >/dev/null
   long_start="$(date +%s)"

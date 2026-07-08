@@ -8,7 +8,7 @@ loopback (`127.0.0.1:8000`).
 
 This repo is **orchestration and documentation only**. It vendors no upstream source: the
 serving image is *built from* a pinned community recipe and the weights are *pulled from*
-Hugging Face at deploy time. See [CREDITS.md](CREDITS.md).
+Hugging Face at deploy time. See [NOTICE](NOTICE) for upstream attribution.
 
 > ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
 > single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
@@ -117,6 +117,7 @@ compose reads. The full vLLM serve argv lives only in `docker-compose.dspark.yml
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
 | `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool. Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. `3` + probabilistic draft is the garble fix — **do not** revert to greedy `5`. See `docs/03`. |
+| `DSPARK_REASONING` | `off` | Thinking mode. `off` = non-think greedy (`temp 0`). `on` = server-default thinking + `temp/top_p 1.0`. Read the CoT from **`message.reasoning`** (not `reasoning_content`). See `docs/06`. |
 | `NCCL_IB_HCA` | `rocep1s0f1,roceP2p1s0f1` | RDMA data path. Default = both RoCE twins (~200G). `04-run-nccl-bench.sh` A/B-tests this. |
 
 Reference numbers on one pair (yours will vary): KV pool **~2.8M tokens** @ util 0.85
@@ -135,21 +136,15 @@ Reference numbers on one pair (yours will vary): KV pool **~2.8M tokens** @ util
 | [docs/03-model-and-features.md](docs/03-model-and-features.md) | The model, NVFP4-KV, DSpark spec-decode, the garble fix, and image provenance. |
 | [docs/04-serving-and-systemd.md](docs/04-serving-and-systemd.md) | The serve profile, TP=2 rendezvous, systemd user units, preflight, and the inference watchdog. |
 | [docs/05-troubleshooting.md](docs/05-troubleshooting.md) | OOM ladder, NCCL bandwidth, garbled output, restart deadlocks, and the security/listener audit. |
+| [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---
 
-## Credits
+## License & attribution
 
-This kit stands entirely on the community authors below — see [CREDITS.md](CREDITS.md) and
-[NOTICE](NOTICE) for full provenance, links, and licenses. If you use it, credit them; if you
-improve on it, send fixes upstream.
-
-- **tonyd2wild** — the 2× DGX Spark NVFP4-KV + DSpark serving recipe this kit pins and builds.
-- **drowzeys ("Keys")** — the DSpark concurrency patch, the `nvfp4_ds_mla` KV path, and the sparse-MLA / dual-cache work.
-- **aidendle94** — the compiled GB10 (`sm_121a`) DeepGEMM and sparse-MLA kernels shipped inside the image.
-- **MiaAI-Lab** · **rafaelcaricio** — dual-Spark packaging / worker-first ordering and DSpark vLLM integration.
-- **vLLM** (Apache-2.0) — the inference engine. **DeepSeek AI** — the model weights. **NVIDIA** — DGX Spark, GB10, and the "connect two Sparks" guidance.
-
-Licensed under Apache-2.0 (see [LICENSE](LICENSE)). Contributions welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Licensed under Apache-2.0 (see [LICENSE](LICENSE)). This kit is orchestration and documentation
+only — it vendors no upstream source; the serving image is built from a pinned community recipe and
+the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
+the recipe/image, and the GB10 kernels) each ship under their own licenses; see [NOTICE](NOTICE) for
+the attribution required by those licenses. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).

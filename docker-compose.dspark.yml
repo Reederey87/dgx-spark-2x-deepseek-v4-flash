@@ -86,6 +86,15 @@ services:
       MASTER_PORT: "${MASTER_PORT:-25000}"
       MTP_NUM_TOKENS: "${MTP_NUM_TOKENS:-3}"
 
+      # Reasoning toggle (see docs/06). off (default) = non-think greedy (byte-identical to the
+      # original tuned recipe); on = server-default thinking + the official V4-Flash reasoning
+      # sampling (temp/top_p 1.0). Effort: high (default) or max (max needs MAX_MODEL_LEN>=393216).
+      DSPARK_REASONING: "${DSPARK_REASONING:-off}"
+      DSPARK_REASONING_EFFORT: "${DSPARK_REASONING_EFFORT:-high}"
+
+    # NOTE: keep BOTH --generation-config vllm and --override-generation-config — complementary, not
+    # redundant (vllm ignores the model's generation_config.json; override overlays sampling). Part of
+    # the agent-garble fix. The reasoning toggle below builds CHAT_KWARGS/GEN_OVERRIDE in-shell.
     command:
       - bash
       - -lc
@@ -97,6 +106,7 @@ services:
         export CUDAToolkit_ROOT="$${CUDAToolkit_ROOT:-$${CUDA_HOME}}";
         export LD_LIBRARY_PATH="/opt/env/lib:/opt/env/targets/sbsa-linux/lib:$${LD_LIBRARY_PATH:-}";
         SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-3},\"draft_sample_method\":\"probabilistic\"}";
+        if [ "$${DSPARK_REASONING:-off}" = "on" ]; then CHAT_KWARGS="{\"thinking\":true,\"reasoning_effort\":\"$${DSPARK_REASONING_EFFORT:-high}\"}"; GEN_OVERRIDE="{\"temperature\":1.0,\"top_p\":1.0}"; else CHAT_KWARGS="{\"thinking\":false}"; GEN_OVERRIDE="{\"temperature\":0.0,\"top_p\":1.0}"; fi;
         exec /opt/env/bin/vllm serve ${DSPARK_MODEL:-deepseek-ai/DeepSeek-V4-Flash-DSpark}
         --served-model-name ${SERVED_MODEL_NAME:-deepseek-v4-flash-dspark}
         --host ${VLLM_HOST:-127.0.0.1}
@@ -121,9 +131,9 @@ services:
         --enable-auto-tool-choice
         --reasoning-parser deepseek_v4
         --reasoning-config '{"reasoning_parser":"deepseek_v4","reasoning_start_str":"<think>","reasoning_end_str":"</think>"}'
-        --default-chat-template-kwargs '{"thinking":false}'
+        --default-chat-template-kwargs "$${CHAT_KWARGS}"
         --generation-config vllm
-        --override-generation-config '{"temperature":0.0,"top_p":1.0}'
+        --override-generation-config "$${GEN_OVERRIDE}"
         --enable-flashinfer-autotune
         --nnodes 2
         --node-rank ${NODE_RANK}

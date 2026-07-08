@@ -30,7 +30,7 @@ The serving substrate — the things every feature below sits on top of — is:
 > **prebuilt, non-source-buildable GB10 kernels**. This is experimental, fast-moving work.
 > This repo does **not** vendor their source — it *builds from* a pinned recipe and *pulls*
 > the weights at deploy time. **Validate on your own hardware behind your own smoke tests.**
-> See [`CREDITS.md`](../CREDITS.md) for the full provenance chain.
+> See [`NOTICE`](../NOTICE) for upstream attribution.
 
 ## Where the features come from (provenance in one breath)
 
@@ -215,6 +215,10 @@ draft of length 5. The fix, which is the current default, is:
 guards — see [`docs/LONG_CONTEXT_CRASH_FIX.md`](./LONG_CONTEXT_CRASH_FIX.md). If you still see
 garbled output, walk the ladder in [`docs/05-troubleshooting.md`](./05-troubleshooting.md).
 
+The default profile is greedy `temp 0`. Enabling **reasoning mode** (`DSPARK_REASONING=on`) moves
+sampling to the official V4-Flash reasoning point (`temp/top_p 1.0`), so it is a garble-gated switch —
+re-run `eval-cluster.sh` after flipping it. See [`docs/06-reasoning-mode.md`](./06-reasoning-mode.md).
+
 ## The B12X MoE path — the single biggest speed lever
 
 `VLLM_USE_B12X_MOE=1` selects the fast MoE kernel and is the **single biggest speed lever** in
@@ -237,7 +241,7 @@ tradeoff, not a free upgrade — if you're chasing decode throughput, this is a 
 ## Provenance, alternatives, and upstream convergence
 
 This repo **pins the currently-proven tonyd2wild recipe + `dspark-nvfp4-stage-c` image on
-purpose** (see [`CREDITS.md`](../CREDITS.md)). Known alternatives that this kit does **not**
+purpose** (see [`NOTICE`](../NOTICE)). Known alternatives that this kit does **not**
 ship:
 
 - **drowzeys' vLLM 0.24.0 port** — `git-apply` patches rather than a prebuilt image.

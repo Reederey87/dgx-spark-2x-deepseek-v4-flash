@@ -13,7 +13,7 @@ the underlying condition for debugging.
 DSpark speculative decoding keeps a **persistent per-request draft KV cache**. In
 vLLM v1 the running set of requests is compacted as requests finish — a finished
 request's slot can be reused by a different request. The community "Keys" concurrency
-patch (see `CREDITS.md` and `docs/03-model-and-features.md`) makes the draft-KV slot
+patch (see `docs/03-model-and-features.md`) makes the draft-KV slot
 mapping **request-stable** so a reused slot never silently serves the wrong request.
 
 `DSPARK_SLOT_CLAMP` is the belt-and-suspenders guard that pairs with that patch: if a

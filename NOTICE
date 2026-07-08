@@ -8,7 +8,7 @@ model weights, the serving container image, or the upstream vLLM/kernel source
 it builds on — those are pulled at build time from their own repositories, each
 under its own license. This project orchestrates and documents them.
 
-Attributed upstreams (see CREDITS.md for URLs and details):
+Attributed upstreams:
 
   - vLLM                         (Apache-2.0)   — the inference engine
   - DeepSeek-V4-Flash-DSpark     — model weights, by DeepSeek AI, under the
