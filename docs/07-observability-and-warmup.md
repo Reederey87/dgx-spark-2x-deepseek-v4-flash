@@ -169,7 +169,7 @@ split**, queue depth sampled under concurrency, and **p50/p95/p99** latency over
 The two slow probes are opt-out via env guards so a quick correctness-only run stays fast:
 
 ```bash
-SKIP_TTFT=1 SKIP_LATENCY=1 bash eval-cluster.sh   # skip the streaming-TTFT and latency-burst probes
+SKIP_TTFT=1 SKIP_LATENCY=1 bash runtime/eval-cluster.sh   # skip the streaming-TTFT and latency-burst probes
 ```
 
 Reference composite on one pair is high-90s with the HoL fix wired; the number is a health

@@ -124,12 +124,29 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. `3` + probabilistic draft is the garble fix — **do not** revert to greedy `5`. See `docs/03`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
 | `DSPARK_REASONING` | `off` | Thinking mode. `off` = non-think greedy (`temp 0`). `on` = server-default thinking + `temp/top_p 1.0`. Read the CoT from **`message.reasoning`** (not `reasoning_content`). See `docs/06`. |
-| `NCCL_IB_HCA` | `rocep1s0f1,roceP2p1s0f1` | RDMA data path. Default = both RoCE twins (~200G). `04-run-nccl-bench.sh` A/B-tests this. |
+| `NCCL_IB_HCA` | `rocep1s0f1,roceP2p1s0f1` | RDMA data path. Default = both RoCE twins (~200G). `bringup/04-run-nccl-bench.sh` A/B-tests this. |
 
-Reference numbers on one pair (yours will vary): KV pool **~2.8M tokens** @ util 0.85
-(~2.0M @ 0.80), **5/5** correctness eval, a **147K-token needle retrieved in ~86 s**,
-**~48 tok/s** aggregate at concurrency 3, single-stream **~22–34 tok/s**. Startup ~5–10 min
-(cold ~9.5, warm ~5).
+---
+
+## Performance
+
+Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` (2026-07-08, `GPU_MEMORY_UTILIZATION=0.80`, `DSPARK_REASONING=off`). These are **observations, not guarantees** — yours will vary with silicon, thermals, firmware, and context.
+
+| Metric | Result |
+|---|---|
+| **Composite eval score** | **98.2 / 100** — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 0.82 |
+| Correctness | 7/7 functional probes + a **147K-token needle** (retrieved in ~83 s), zero garble |
+| Throughput — single stream | ~31–47 tok/s (prose ~37, code ~47) |
+| Throughput — aggregate @ concurrency 3 | ~55 tok/s |
+| Prefill throughput | ~900 tok/s |
+| Spec-decode acceptance | ~0.49 (per-position 0.71 / 0.48 / 0.29, draft len 3) |
+| **TTFT — idle** | **~150 ms** |
+| **TTFT — during a live ~130K-token prefill** | **~5.9 s with the head-of-line fix, vs ~59 s without** (≈10×; see [docs/07](docs/07-observability-and-warmup.md)) |
+| Latency p50 / p95 / p99 (short-request burst) | ~620 / 630 / 630 ms |
+| KV cache pool | ~2.0M tokens @ util 0.80 (~2.8M @ the 0.85 default for a dedicated pair) |
+| Startup (worker → head, to `/health` 200) | ~5–10 min (warm ~6) |
+
+`eval-cluster.sh` prints all of the above plus the composite in one run; `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes.
 
 ---
 

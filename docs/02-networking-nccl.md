@@ -56,8 +56,8 @@ across the link:
 ## Benchmark the RDMA path — `03` then `04`
 
 ```bash
-bash 03-build-nccl-tests.sh   # NCCL v2.30u1 + nccl-tests, sm_121, on BOTH nodes
-bash 04-run-nccl-bench.sh     # runs 3 arms from the head, prints a summary + a gate
+bash bringup/03-build-nccl-tests.sh   # NCCL v2.30u1 + nccl-tests, sm_121, on BOTH nodes
+bash bringup/04-run-nccl-bench.sh     # runs 3 arms from the head, prints a summary + a gate
 ```
 
 `04-run-nccl-bench.sh` runs `all_reduce_perf` (256M → 4G) across three arms and reports

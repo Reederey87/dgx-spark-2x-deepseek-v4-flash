@@ -74,7 +74,7 @@ built to recover this unattended (they reset-failed and bounce the pair in the r
 see [04-serving-and-systemd.md](04-serving-and-systemd.md)), but if you need to force it:
 
 ```bash
-bash stop-cluster.sh && bash start-cluster.sh   # the recovery hammer: clean stop, then worker-first restart
+bash runtime/stop-cluster.sh && bash runtime/start-cluster.sh   # the recovery hammer: clean stop, then worker-first restart
 ```
 
 `stop-cluster.sh` stops head-first and removes both containers; `start-cluster.sh` brings the

@@ -45,8 +45,8 @@ if [02-networking-nccl.md](02-networking-nccl.md) shows it, come back here.
 
 ```bash
 # Run this FIRST, on EACH node, if the two nodes' firmware differ.
-ssh -t "$HEAD_HOST"   'cd ~/dgx-cluster && bash 00-node-prep.sh head   --firmware'
-ssh -t "$WORKER_HOST" 'cd ~/dgx-cluster && bash 00-node-prep.sh worker --firmware'
+ssh -t "$HEAD_HOST"   'cd ~/dgx-cluster && bash bringup/00-node-prep.sh head   --firmware'
+ssh -t "$WORKER_HOST" 'cd ~/dgx-cluster && bash bringup/00-node-prep.sh worker --firmware'
 # It runs `fwupdmgr refresh` + `fwupdmgr update`. If an update is applied:
 sudo reboot                      # on each node
 # then re-run 00-node-prep.sh WITHOUT --firmware to do the rest of node prep.

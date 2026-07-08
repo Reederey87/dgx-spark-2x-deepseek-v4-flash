@@ -111,5 +111,5 @@ curl -s :8000/v1/chat/completions -H 'Content-Type: application/json' -d '{
   "chat_template_kwargs":{"thinking":true},"max_tokens":600}' \
  | jq '.choices[0].message.reasoning'
 
-bash eval-cluster.sh   # garble gate — must stay green after enabling DSPARK_REASONING=on
+bash runtime/eval-cluster.sh   # garble gate — must stay green after enabling DSPARK_REASONING=on
 ```
