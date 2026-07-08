@@ -52,39 +52,42 @@ before the head**; the head rendezvouses to `MASTER_ADDR:MASTER_PORT` (= `HEAD_R
 ## Quickstart
 
 Everything except step 3 runs from a **control host** (any machine with SSH to both nodes).
-Step 3 runs **on** each node. The kit is flat at the repo root; only `docs/` is separate.
+Step 3 runs **on** each node. The repo is organized into `bringup/` (one-time, control-host
+setup), `runtime/` (everything a node runs + the lifecycle/ops scripts), and `docs/`. The whole
+tree is rsynced to each node *preserving that structure* — the units reference
+`%h/dgx-cluster/runtime/…`.
 
 ```bash
 # 1. Configure — this is the single source of truth for the whole kit.
-cp cluster.env.example cluster.env
-$EDITOR cluster.env                       # set HEAD_HOST / WORKER_HOST (identity block)
+cp runtime/cluster.env.example runtime/cluster.env
+$EDITOR runtime/cluster.env                # set HEAD_HOST / WORKER_HOST (identity block)
 export CONTROL_HOST_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)"   # authorized on the nodes
 
-# 2. Copy the kit to each node as your normal login user (the cluster user
-#    does not exist yet). The on-node dir MUST be named dgx-cluster (units use %h/dgx-cluster).
+# 2. Copy the kit to each node as your normal login user (the cluster user does not
+#    exist yet). The on-node dir MUST be named dgx-cluster; keep bringup/ + runtime/ intact.
 rsync -a ./ "$HEAD_HOST:~/dgx-cluster/"
 rsync -a ./ "$WORKER_HOST:~/dgx-cluster/"
 
 # 3. One-time node prep — runs ON each node with its role (the only sudo step).
 #    Add --firmware FIRST if the two nodes' firmware differ (then reboot, re-run without it).
-ssh -t "$HEAD_HOST"   'cd ~/dgx-cluster && bash 00-node-prep.sh head'
-ssh -t "$WORKER_HOST" 'cd ~/dgx-cluster && bash 00-node-prep.sh worker'
+ssh -t "$HEAD_HOST"   'cd ~/dgx-cluster && bash bringup/00-node-prep.sh head'
+ssh -t "$WORKER_HOST" 'cd ~/dgx-cluster && bash bringup/00-node-prep.sh worker'
 
 # 4. Bring up the fabric + build + serve — all from the control host, in order.
-bash 01-verify-fabric.sh        # QSFP addressing, MTU 9000, RoCE up, jumbo ping both ways
-bash 02-setup-cluster-ssh.sh    # node-to-node SSH over the QSFP rail IPs
-bash 03-build-nccl-tests.sh     # NCCL v2.30u1 + nccl-tests at sm_121, both nodes
-bash 04-run-nccl-bench.sh       # A/B the RDMA arms; put the winner in cluster.env (gate ≥15 GB/s)
-bash 05-build-image.sh          # build the DSpark vLLM image on the head (pin BASE_IMAGE_DIGEST)
-bash 06-distribute-image.sh     # copy the image head → worker over QSFP; verify IDs match
-bash 07-download-weights.sh     # pull public weights to the head's token-free HF cache
-bash 08-distribute-weights.sh   # rsync weights head → worker; verify file/byte parity
-bash 09-smoke-serve.sh          # foreground bring-up via compose; /health + a chat completion
+bash bringup/01-verify-fabric.sh     # QSFP addressing, MTU 9000, RoCE up, jumbo ping both ways
+bash bringup/02-setup-cluster-ssh.sh # node-to-node SSH over the QSFP rail IPs
+bash bringup/03-build-nccl-tests.sh  # NCCL v2.30u1 + nccl-tests at sm_121, both nodes
+bash bringup/04-run-nccl-bench.sh    # A/B the RDMA arms; put the winner in cluster.env (gate ≥15 GB/s)
+bash bringup/05-build-image.sh       # build the DSpark vLLM image on the head (pin BASE_IMAGE_DIGEST)
+bash bringup/06-distribute-image.sh  # copy the image head → worker over QSFP; verify IDs match
+bash bringup/07-download-weights.sh  # pull public weights to the head's token-free HF cache
+bash bringup/08-distribute-weights.sh # rsync weights head → worker; verify file/byte parity
+bash bringup/09-smoke-serve.sh       # foreground bring-up via compose; /health + a chat completion
 
 # 5. Install the systemd user units, make the cluster primary, evaluate.
-bash install-services.sh        # sync kit + install units on both nodes (does not start them)
-bash cluster-enable.sh          # enable for boot + start (worker-first) + poll /health
-bash eval-cluster.sh            # correctness + throughput + long-context needle probes
+bash bringup/install-services.sh     # sync kit + install units on both nodes (does not start them)
+bash runtime/cluster-enable.sh       # enable for boot + start (worker-first) + poll /health
+bash runtime/eval-cluster.sh         # correctness + throughput + long-context needle probes
 ```
 
 Call it (from the head node, loopback):
@@ -99,16 +102,18 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
       }'
 ```
 
-Daily ops: `start-cluster.sh` / `stop-cluster.sh` (bring the running cluster up/down),
-`cluster-enable.sh` / `cluster-disable.sh` (toggle boot-persistence too), `eval-cluster.sh`,
-`metrics.sh`.
+Daily ops (all in `runtime/`): `start-cluster.sh` / `stop-cluster.sh` (bring the running cluster
+up/down), `cluster-enable.sh` / `cluster-disable.sh` (toggle boot-persistence too), `eval-cluster.sh`,
+`metrics.sh`. A `vllm-metrics-watch` user timer on the head runs a read-only observability
+watcher (with optional Telegram alerts), and a non-fatal readiness warm-up primes the decode and
+tool-parser paths after each head restart — see [docs/07](docs/07-observability-and-warmup.md).
 
 ---
 
 ## Tunables (the "sweet spot")
 
-All live in `cluster.env`; `render-env.sh` bakes them into a node-local `.env.dspark` that
-compose reads. The full vLLM serve argv lives only in `docker-compose.dspark.yml`.
+All live in `runtime/cluster.env`; `render-env.sh` bakes them into a node-local `.env.dspark`
+that compose reads. The full vLLM serve argv lives only in `runtime/docker-compose.dspark.yml`.
 
 | Knob | Default | Meaning |
 |---|---|---|
@@ -117,6 +122,7 @@ compose reads. The full vLLM serve argv lives only in `docker-compose.dspark.yml
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
 | `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool. Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. `3` + probabilistic draft is the garble fix — **do not** revert to greedy `5`. See `docs/03`. |
+| `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
 | `DSPARK_REASONING` | `off` | Thinking mode. `off` = non-think greedy (`temp 0`). `on` = server-default thinking + `temp/top_p 1.0`. Read the CoT from **`message.reasoning`** (not `reasoning_content`). See `docs/06`. |
 | `NCCL_IB_HCA` | `rocep1s0f1,roceP2p1s0f1` | RDMA data path. Default = both RoCE twins (~200G). `04-run-nccl-bench.sh` A/B-tests this. |
 
@@ -137,6 +143,7 @@ Reference numbers on one pair (yours will vary): KV pool **~2.8M tokens** @ util
 | [docs/04-serving-and-systemd.md](docs/04-serving-and-systemd.md) | The serve profile, TP=2 rendezvous, systemd user units, preflight, and the inference watchdog. |
 | [docs/05-troubleshooting.md](docs/05-troubleshooting.md) | OOM ladder, NCCL bandwidth, garbled output, restart deadlocks, and the security/listener audit. |
 | [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
+| [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, Telegram alerts, readiness warm-up, and the eval composite score. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---

@@ -1,0 +1,12 @@
+# Fire the metrics watcher every ~45 s. Enable with:
+#   systemctl --user enable --now vllm-metrics-watch.timer
+[Unit]
+Description=Run the vLLM metrics watcher every ~45s
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=45s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

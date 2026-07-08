@@ -3,7 +3,7 @@
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
-source "$KIT/cluster.env"
+source "$KIT/../runtime/cluster.env"
 
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
@@ -18,11 +18,11 @@ if [ -n "${CONFLICTING_SERVICE:-}" ]; then
   echo "ok: conflicting service '$CONFLICTING_SERVICE' not active"
 fi
 
-ssh "$CLUSTER_USER@$WORKER_HOST" "cd '$KIT_DIR' && bash render-env.sh worker && docker compose --env-file .env.dspark -f docker-compose.dspark.yml up -d" \
+ssh "$CLUSTER_USER@$WORKER_HOST" "cd '$KIT_DIR/runtime' && bash render-env.sh worker && docker compose --env-file .env.dspark -f docker-compose.dspark.yml up -d" \
   || fail "worker compose start failed" "inspect docker compose logs on worker"
 echo "ok: worker compose started"
 
-ssh "$CLUSTER_USER@$HEAD_HOST" "cd '$KIT_DIR' && bash render-env.sh head && docker compose --env-file .env.dspark -f docker-compose.dspark.yml up -d" \
+ssh "$CLUSTER_USER@$HEAD_HOST" "cd '$KIT_DIR/runtime' && bash render-env.sh head && docker compose --env-file .env.dspark -f docker-compose.dspark.yml up -d" \
   || fail "head compose start failed" "inspect docker compose logs on head"
 echo "ok: head compose started"
 
@@ -70,6 +70,6 @@ done
 cat <<EOF
 ok: smoke serve complete
 teardown:
-  ssh $CLUSTER_USER@$HEAD_HOST 'cd $KIT_DIR && docker compose --env-file .env.dspark -f docker-compose.dspark.yml down'
-  ssh $CLUSTER_USER@$WORKER_HOST 'cd $KIT_DIR && docker compose --env-file .env.dspark -f docker-compose.dspark.yml down'
+  ssh $CLUSTER_USER@$HEAD_HOST 'cd $KIT_DIR/runtime && docker compose --env-file .env.dspark -f docker-compose.dspark.yml down'
+  ssh $CLUSTER_USER@$WORKER_HOST 'cd $KIT_DIR/runtime && docker compose --env-file .env.dspark -f docker-compose.dspark.yml down'
 EOF

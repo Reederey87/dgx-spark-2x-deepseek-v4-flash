@@ -1,0 +1,12 @@
+# Loopback observability watcher for the head node. Driven by the paired .timer;
+# installed via install-services.sh. Read-only; never touches the serving container.
+[Unit]
+Description=vLLM DeepSeek-V4 loopback metrics watcher
+After=vllm-dsv4-head.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/dgx-cluster/runtime
+ExecStart=/usr/bin/bash %h/dgx-cluster/runtime/metrics-watch.sh
+# A watcher must never wedge; cap each run.
+TimeoutStartSec=60

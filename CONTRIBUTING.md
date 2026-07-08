@@ -7,19 +7,26 @@ risk** are the most valuable.
 
 ## Ground rules
 
-- **No secrets, ever.** No hostnames, IPs beyond the RFC1918 defaults, SSH keys,
-  API/HF tokens, or personal paths in committed files. Site-specific values live
-  only in your local `cluster.env` (git-ignored). Before you push, run:
+- **No secrets, ever.** No real hostnames, IPs beyond the RFC1918 fabric defaults,
+  SSH keys, API/HF/Telegram tokens, or personal paths in committed files.
+  Site-specific values live only in your local `runtime/cluster.env` and
+  `runtime/notify.env` (both git-ignored). Before you push, run:
   ```bash
-  grep -rniE 'ssh-ed25519 AAAA|BEGIN .*PRIVATE KEY|api[_-]?key|hf_[A-Za-z0-9]{20}' .
+  grep -rniE 'ssh-ed25519 AAAA|BEGIN .*PRIVATE KEY|api[_-]?key|hf_[A-Za-z0-9]{20}|[0-9]{8,}:[A-Za-z0-9_-]{30,}' .
   ```
-  and confirm it's clean.
-- **Keep the runtime kit flat.** The scripts, `cluster.env`, `render-env.sh`,
-  `docker-compose.dspark.yml`, and the `*.service` units are rsynced *together* to
-  `KIT_DIR` on each node and run from there. Don't reorganize them into
-  subdirectories — it breaks the deploy model. (Human docs live in `docs/`.)
-- **One source of truth.** Every tunable belongs in `cluster.env.example` with a
-  comment. Don't hardcode a value in a script if it could be a variable.
+  (the last alternative catches a Telegram bot token) and confirm it's clean, and
+  that no real machine names or LAN IPs slipped into a comment.
+- **The layout is `bringup/` + `runtime/` + `docs/`.** `bringup/` holds the one-time,
+  control-host-driven setup (numbered scripts + `install-services.sh`); `runtime/`
+  holds everything a node runs — `cluster.env`, `render-env.sh`,
+  `docker-compose.dspark.yml`, the `*.service`/`*.timer` units, and the lifecycle +
+  ops scripts. The whole tree is rsynced to `KIT_DIR` on each node *preserving this
+  structure*, and the units reference `%h/dgx-cluster/runtime/…`. If you move a
+  runtime file, update the unit paths and `bringup/install-services.sh` to match.
+- **One source of truth.** Every tunable belongs in `runtime/cluster.env.example`
+  with a comment. Don't hardcode a value in a script if it could be a variable —
+  and `render-env.sh` bakes each into `.env.dspark`, so a var it emits MUST exist in
+  `cluster.env.example` (or `render-env.sh` aborts under `set -u`).
 - **Pin upstreams.** New image/recipe dependencies must be pinned (digest or SHA)
   and attributed in `NOTICE`.
 - **Shell hygiene.** `set -euo pipefail`, `bash -n` clean, and prefer bounded
@@ -29,8 +36,8 @@ risk** are the most valuable.
 
 There is no CI — this touches real hardware. At minimum:
 
-1. `bash -n *.sh` on every script you touched.
-2. `docker compose --env-file .env.dspark -f docker-compose.dspark.yml config`
+1. `bash -n bringup/*.sh runtime/*.sh` on every script you touched.
+2. From `runtime/`, `docker compose --env-file .env.dspark -f docker-compose.dspark.yml config`
    parses after a `render-env.sh` run.
 3. If you changed the serve path or a tunable, re-run `09-smoke-serve.sh` and
    `eval-cluster.sh` on a real 2× Spark pair and paste the numbers in the PR.

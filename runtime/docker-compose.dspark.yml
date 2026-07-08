@@ -33,11 +33,17 @@ services:
       DSPARK_SLOT_CLAMP: "${DSPARK_SLOT_CLAMP:-1}"
       VLLM_HOST_IP: "${VLLM_HOST_IP:-}"
 
-      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-1}"
+      # 0 (default) keeps vLLM's guard that MAX_MODEL_LEN cannot exceed the model's
+      # derived ceiling (== 65536*16 for this model). Set 1 only to deliberately
+      # extrapolate past calibration (unsupported); 0 removes that latent footgun.
+      VLLM_ALLOW_LONG_MAX_MODEL_LEN: "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-0}"
       VLLM_TRITON_MLA_SPARSE: "${VLLM_TRITON_MLA_SPARSE:-1}"
       VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "${VLLM_SPARSE_INDEXER_MAX_LOGITS_MB:-256}"
       VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-0}"
       VLLM_SKIP_INIT_MEMORY_CHECK: "${VLLM_SKIP_INIT_MEMORY_CHECK:-1}"
+      # Per-step model-execute timeout; a larger value tolerates long cudagraph
+      # capture / first-step compiles at 1M context without a spurious abort.
+      VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-300}"
 
       # FlashInfer sampler is part of the 2026-07-03 DSpark garble fix.
       VLLM_USE_FLASHINFER_SAMPLER: "${VLLM_USE_FLASHINFER_SAMPLER:-1}"
@@ -65,6 +71,7 @@ services:
       FLASHINFER_CUDA_ARCH_LIST: "${FLASHINFER_CUDA_ARCH_LIST:-12.1a}"
       FLASHINFER_DISABLE_VERSION_CHECK: "${FLASHINFER_DISABLE_VERSION_CHECK:-1}"
       TILELANG_CLEANUP_TEMP_FILES: "${TILELANG_CLEANUP_TEMP_FILES:-1}"
+      TILELANG_CACHE_DIR: "${TILELANG_CACHE_DIR:-/cache/huggingface/tilelang}"
       DG_JIT_USE_NVRTC: "${DG_JIT_USE_NVRTC:-0}"
       DG_JIT_NVCC_COMPILER: "${DG_JIT_NVCC_COMPILER:-/opt/env/bin/nvcc}"
       PYTORCH_CUDA_ALLOC_CONF: "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
@@ -75,6 +82,7 @@ services:
       NCCL_SOCKET_IFNAME: "${NCCL_SOCKET_IFNAME}"
       NCCL_IB_GID_INDEX: "${NCCL_IB_GID_INDEX:-}"
       NCCL_CROSS_NIC: "${NCCL_CROSS_NIC:-1}"
+      NCCL_IB_MERGE_NICS: "${NCCL_IB_MERGE_NICS:-1}"
       NCCL_CUMEM_ENABLE: "${NCCL_CUMEM_ENABLE:-0}"
       NCCL_IGNORE_CPU_AFFINITY: "${NCCL_IGNORE_CPU_AFFINITY:-1}"
       NCCL_DEBUG: "${NCCL_DEBUG:-WARN}"
@@ -114,12 +122,13 @@ services:
         --trust-remote-code
         --tensor-parallel-size 2
         --pipeline-parallel-size 1
-        --kv-cache-dtype nvfp4_ds_mla
+        --kv-cache-dtype ${KV_CACHE_DTYPE:-nvfp4_ds_mla}
         --block-size 256
         --max-model-len ${MAX_MODEL_LEN:-1048576}
         --max-num-seqs ${MAX_NUM_SEQS:-6}
         --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS:-8192}
-        --max-cudagraph-capture-size ${MAX_NUM_SEQS:-6}
+        --long-prefill-token-threshold ${LONG_PREFILL_TOKEN_THRESHOLD:-0}
+        --max-cudagraph-capture-size ${MAX_CUDAGRAPH_CAPTURE_SIZE:-48}
         --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
         --enable-prefix-caching
         --async-scheduling

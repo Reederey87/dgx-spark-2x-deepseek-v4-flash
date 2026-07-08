@@ -3,8 +3,8 @@
 # once per node, with its role. Copy this kit to the node first (as your normal
 # login user — the 'nvidia' user does not exist yet), then:
 #
-#   ssh -t "$HEAD_HOST"   'cd ~/dgx-cluster && bash 00-node-prep.sh head'
-#   ssh -t "$WORKER_HOST" 'cd ~/dgx-cluster && bash 00-node-prep.sh worker'
+#   ssh -t "$HEAD_HOST"   'cd ~/dgx-cluster && bash bringup/00-node-prep.sh head'
+#   ssh -t "$WORKER_HOST" 'cd ~/dgx-cluster && bash bringup/00-node-prep.sh worker'
 #
 # Idempotent. Prints the change list, asks one confirmation, needs sudo once.
 # Creates the shared unprivileged CLUSTER_USER (docker group only — NEVER sudo),
@@ -13,14 +13,14 @@
 #
 # Optional firmware pass (do this FIRST if your two nodes' firmware differ —
 # mismatched NIC/SoC firmware is a documented cause of collapsed NCCL bandwidth):
-#   bash 00-node-prep.sh <head|worker> --firmware   # then reboot, then re-run
+#   bash bringup/00-node-prep.sh <head|worker> --firmware   # then reboot, then re-run
 #                                                    # without --firmware.
 set -euo pipefail
 
 ROLE="${1:?usage: 00-node-prep.sh <head|worker> [--firmware]}"
 KIT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
-source "$KIT/cluster.env"
+source "$KIT/../runtime/cluster.env"
 
 APT_PKGS="libopenmpi-dev openmpi-bin build-essential git iperf3 zstd ibverbs-utils infiniband-diags"
 

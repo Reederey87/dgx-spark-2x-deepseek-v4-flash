@@ -86,7 +86,9 @@ Runs as `ExecStartPre` on the node itself. Every wait is **bounded** (the head u
    worker's `StartLimit`, otherwise leaving the head waiting forever).
 
 It also removes any stale `vllm-dsv4` container before compose runs, and (optionally) enforces
-the memory-pool mutual-exclusion below.
+the memory-pool mutual-exclusion below. Its non-fatal `check_hol_threshold()` guard, the
+runtime observability watcher, the readiness warm-up (`ExecStartPost` on the head), and optional
+Telegram alerting all live in [07-observability-and-warmup.md](07-observability-and-warmup.md).
 
 ## `watchdog.sh` — inference-level self-heal
 

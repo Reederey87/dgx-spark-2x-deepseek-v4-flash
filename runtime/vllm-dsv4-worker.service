@@ -1,0 +1,21 @@
+# systemd user unit for the WORKER node (rank 1, --headless). Install via install-services.sh.
+[Unit]
+Description=vLLM DeepSeek-V4-Flash-DSpark worker (rank 1, headless)
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dgx-cluster/runtime
+TimeoutStartSec=900
+TimeoutStopSec=90
+ExecStartPre=/usr/bin/bash %h/dgx-cluster/runtime/preflight.sh worker
+ExecStartPre=/usr/bin/bash %h/dgx-cluster/runtime/render-env.sh worker
+ExecStart=/usr/bin/docker compose --env-file %h/dgx-cluster/runtime/.env.dspark -f %h/dgx-cluster/runtime/docker-compose.dspark.yml up --exit-code-from vllm-dspark
+ExecStop=/usr/bin/docker compose --env-file %h/dgx-cluster/runtime/.env.dspark -f %h/dgx-cluster/runtime/docker-compose.dspark.yml down -t 30
+ExecStopPost=-/usr/bin/docker rm -f vllm-dsv4
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,28 @@
+# systemd user unit for the HEAD node (rank 0). Install via install-services.sh.
+# Coordination with the worker (and any optional CONFLICTING_SERVICE) is script-level
+# (preflight.sh) — systemd deps cannot cross user managers or nodes.
+[Unit]
+Description=vLLM DeepSeek-V4-Flash-DSpark head (rank 0, TP=2)
+StartLimitIntervalSec=3600
+StartLimitBurst=6
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dgx-cluster/runtime
+# Worst case: 3 boot-dep waits (300s) + peer wait (300s) + worker wait (600s)
+TimeoutStartSec=2100
+TimeoutStopSec=90
+ExecStartPre=/usr/bin/bash %h/dgx-cluster/runtime/preflight.sh head
+ExecStartPre=/usr/bin/bash %h/dgx-cluster/runtime/render-env.sh head
+ExecStart=/usr/bin/docker compose --env-file %h/dgx-cluster/runtime/.env.dspark -f %h/dgx-cluster/runtime/docker-compose.dspark.yml up --exit-code-from vllm-dspark
+# Readiness warm-up: non-fatal (- prefix) + backgrounded (&) so it never delays the
+# unit's active state nor blocks TimeoutStartSec. Waits for /health then primes the
+# decode + deepseek_v4 tool-parser paths. See docs/07-observability-and-warmup.md.
+ExecStartPost=-/usr/bin/bash -c '%h/dgx-cluster/runtime/warmup.sh >/dev/null 2>&1 &'
+ExecStop=/usr/bin/docker compose --env-file %h/dgx-cluster/runtime/.env.dspark -f %h/dgx-cluster/runtime/docker-compose.dspark.yml down -t 30
+ExecStopPost=-/usr/bin/docker rm -f vllm-dsv4
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=default.target

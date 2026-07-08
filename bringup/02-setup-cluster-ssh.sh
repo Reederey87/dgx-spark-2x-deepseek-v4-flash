@@ -3,7 +3,7 @@
 set -euo pipefail
 KIT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
-source "$KIT/cluster.env"
+source "$KIT/../runtime/cluster.env"
 
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 

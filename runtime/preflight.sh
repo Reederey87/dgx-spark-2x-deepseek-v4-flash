@@ -22,6 +22,36 @@ wait_for() { # wait_for <secs> <label> <cmd...>
   echo "preflight ok: $label"
 }
 
+# Non-fatal plumbing-integrity guard for the prefill head-of-line (HoL) fix.
+# The HoL fix flows through ${LONG_PREFILL_TOKEN_THRESHOLD:-0}; any config drift or a
+# re-render/rebuild that drops it silently reverts to 0 (off), and NO correctness /
+# needle / throughput gate catches it (they are all TTFT-blind). This statically asserts
+# the fix survives the whole plumbing chain and WARNs — it never fails the boot. See
+# docs/07-observability-and-warmup.md.
+check_hol_threshold() {
+  local warned=0
+  # Require a positive integer (0/unset/negative/non-numeric all mean the fix is inert or
+  # would break `vllm serve` at container start — catch them all, not just the literal "0").
+  if ! printf '%s' "${LONG_PREFILL_TOKEN_THRESHOLD:-}" | grep -qE '^[1-9][0-9]*$'; then
+    echo "preflight WARN: prefill HoL fix inert — LONG_PREFILL_TOKEN_THRESHOLD is '${LONG_PREFILL_TOKEN_THRESHOLD:-<unset>}' in cluster.env (want a positive integer, e.g. 4096). Short-request TTFT will regress under a long prefill." >&2
+    warned=1
+  fi
+  if ! grep -q '^LONG_PREFILL_TOKEN_THRESHOLD=' "$KIT/render-env.sh" 2>/dev/null; then
+    echo "preflight WARN: render-env.sh no longer emits LONG_PREFILL_TOKEN_THRESHOLD — the rendered .env.dspark will omit it and compose falls back to 0 (off)." >&2
+    warned=1
+  fi
+  # Comment-aware: ignore commented-out compose lines so a stray `# --long-prefill-token-threshold`
+  # can't masquerade as the fix being wired.
+  if ! grep -vE '^[[:space:]]*#' "$KIT/docker-compose.dspark.yml" 2>/dev/null | grep -q -- '--long-prefill-token-threshold'; then
+    echo "preflight WARN: docker-compose.dspark.yml no longer passes --long-prefill-token-threshold — the HoL fix is not wired into the serve command." >&2
+    warned=1
+  fi
+  if [ "$warned" = "0" ]; then
+    echo "preflight ok: prefill HoL threshold wired (LONG_PREFILL_TOKEN_THRESHOLD=$LONG_PREFILL_TOKEN_THRESHOLD)"
+  fi
+  return 0
+}
+
 case "$ROLE" in
   head)   MY_R1="$HEAD_R1";   PEER_R1="$WORKER_R1" ;;
   worker) MY_R1="$WORKER_R1"; PEER_R1="$HEAD_R1" ;;
@@ -44,6 +74,9 @@ MODEL_HUB_DIR="$HF_CACHE/hub/models--${DSPARK_MODEL//\//--}"
 
 # A stale container from a previous run must not block compose.
 docker rm -f vllm-dsv4 >/dev/null 2>&1 || true
+
+# Non-fatal: warn (never fail) if the prefill HoL fix has come unwired.
+check_hol_threshold
 
 if [ "$ROLE" = "head" ]; then
   # Optional memory-pool guard: if a conflicting single-node model service is
