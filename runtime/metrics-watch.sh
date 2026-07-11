@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Recipe #11 — lightweight loopback observability watcher for the vllm-dsv4 head.
-# Runs as the cluster user on the head node on a ~45 s systemd user timer
-# (vllm-metrics-watch.timer).
+# Runs on the head node on a ~45 s systemd user timer (vllm-metrics-watch.timer).
 # READ-ONLY: scrapes the loopback :8000/metrics + inspects the running container;
 # computes interval deltas vs a small state file; WARNs (journald + a rotating
 # log) on threshold breach. Closes N-A Caveat A (the TTFT-blind silent revert)
@@ -9,6 +8,19 @@
 # check preflight.sh can't do because it runs pre-container — and (2) an interval
 # TTFT-mean signal that spikes if the HoL fix ever regresses mid-run.
 # Never fails hard: a watcher must survive transient scrape misses.
+#
+# Alert design notes (2026-07-10 false-positive fix):
+# - Idle short-req TTFT is ~110 ms; under one long prefill with the HoL fix ~5–12 s.
+# - A long prefill's OWN TTFT is multi-second by definition (compute-bound prefill)
+#   and is NOT HoL regression. Red Hat / vLLM triage: waiting=0 + high TTFT =
+#   prefill compute; waiting>0 + high TTFT = queueing / starvation.
+# - True silent HoL revert (threshold missing) sends short-req TTFT to ~59 s AND
+#   elevates the waiting queue. Alert only on that class, not on long-prefill wall.
+# - Metrics are unreachable for ~6 min on every boot (night.sh power-cycle); suppress
+#   health WARNs during container warm-up and require a failure streak.
+# - Watchdog fires a 1-token canary every ~5 min (required — /health can lie). That is
+#   NOT user traffic. metrics-watch correlates .watchdog-probe.state (written by
+#   watchdog.sh) so canary-only intervals report ttft_user=n/a and never alert.
 set -uo pipefail   # deliberately NOT -e
 
 KIT="$(cd "$(dirname "$0")" && pwd)"
@@ -17,16 +29,27 @@ source "$KIT/cluster.env"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 STATE="$KIT/.metrics-watch.state"
+STREAK_STATE="$KIT/.metrics-watch.streaks"
+PROBE_STATE="$KIT/.watchdog-probe.state"
 LOG_DIR="$KIT/logs"; mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG="$LOG_DIR/metrics-watch.log"
 MAXLOG=2000   # lines; simple truncate-rotate
 
-# --- thresholds (tunable) ---
-TTFT_WARN_MS="${TTFT_WARN_MS:-3000}"   # interval-mean TTFT; a HoL revert sends short-req TTFT to ~59 s
-WAIT_WARN="${WAIT_WARN:-5}"            # sustained requests waiting
-KVUTIL_WARN="${KVUTIL_WARN:-0.95}"     # KV pool pressure (OOM risk)
-ACCEPT_WARN="${ACCEPT_WARN:-0.30}"     # spec-decode acceptance floor
-MIN_DRAFT="${MIN_DRAFT:-50}"          # ignore acceptance when too few draft tokens this interval (noise)
+# --- thresholds (tunable via env) ---
+# TTFT: only alert when interval-mean is high AND there is queue pressure (or the
+# HoL knob is gone). Long-prefill compute alone with waiting=0 is expected.
+TTFT_WARN_MS="${TTFT_WARN_MS:-8000}"     # contention TTFT floor (HoL-fixed under-load ~6 s)
+TTFT_HOL_MS="${TTFT_HOL_MS:-30000}"      # ≥ this + waiting ⇒ likely true HoL / severe starvation
+WAIT_WARN="${WAIT_WARN:-5}"             # sustained requests waiting
+KVUTIL_WARN="${KVUTIL_WARN:-0.95}"      # KV pool pressure (OOM risk)
+ACCEPT_WARN="${ACCEPT_WARN:-0.30}"      # spec-decode acceptance floor
+MIN_DRAFT="${MIN_DRAFT:-50}"            # ignore acceptance when too few draft tokens this interval
+# Health: boot-to-serving is ~6 min; require N consecutive scrape misses before WARN.
+HEALTH_FAIL_STREAK="${HEALTH_FAIL_STREAK:-4}"   # 4 × ~45 s ≈ 3 min of true down
+# Suppress health WARNs while the container is younger than this (boot/warmup).
+BOOT_GRACE_SECS="${BOOT_GRACE_SECS:-600}"       # 10 min covers boot-to-serving + warmup.sh
+# Consecutive TTFT-contention intervals before Telegram-grade WARN (log still notes earlier).
+TTFT_STREAK="${TTFT_STREAK:-2}"
 
 # --- Telegram alerting (optional; strictly no-op unless notify.env supplies creds) ---
 # notify.env (gitignored, 0600) defines TG_BOT_TOKEN + TG_CHAT_ID. Absent => silent,
@@ -62,6 +85,24 @@ emit() {  # route one analyzer line: WARN → journald(stderr)+log+alert buffer,
   esac
 }
 
+# streak helpers: key=value lines in STREAK_STATE
+streak_get() {
+  local k="$1"
+  [ -f "$STREAK_STATE" ] || { echo 0; return; }
+  local v
+  v="$(sed -n "s/^${k}=//p" "$STREAK_STATE" 2>/dev/null | head -1)"
+  case "$v" in ''|*[!0-9]*) echo 0 ;; *) echo "$v" ;; esac
+}
+streak_set() {
+  local k="$1" v="$2" tmp
+  tmp="$(mktemp)"
+  if [ -f "$STREAK_STATE" ]; then
+    grep -v "^${k}=" "$STREAK_STATE" > "$tmp" 2>/dev/null || true
+  fi
+  printf '%s=%s\n' "$k" "$v" >> "$tmp"
+  mv "$tmp" "$STREAK_STATE" 2>/dev/null || true
+}
+
 notify_finalize() {  # EXIT trap: dedup + cooldown + recovery over the whole run's WARN set
   local warn_lines sig now_epoch prev_sig prev_ts do_notify host
   warn_lines="$(printf '%s' "$WARN_BUF" | sed '/^$/d')"
@@ -94,123 +135,110 @@ notify_finalize() {  # EXIT trap: dedup + cooldown + recovery over the whole run
 }
 trap notify_finalize EXIT
 
+# --- helpers: container age (seconds), 0 if unknown / not running ---
+container_age_secs() {
+  local started now
+  started="$(docker inspect vllm-dsv4 --format '{{.State.StartedAt}}' 2>/dev/null || true)"
+  [ -n "$started" ] || { echo 0; return; }
+  # StartedAt is RFC3339; use date -d (GNU) on Ubuntu DGX OS.
+  now="$(date +%s 2>/dev/null || echo 0)"
+  started_epoch="$(date -d "$started" +%s 2>/dev/null || echo 0)"
+  if [ "$started_epoch" -gt 0 ] && [ "$now" -ge "$started_epoch" ]; then
+    echo $(( now - started_epoch ))
+  else
+    echo 0
+  fi
+}
+
 # --- 1. config-integrity: the HoL fix must be in the RUNNING container's cmd ---
+hol_ok=1
 cmd="$(docker inspect vllm-dsv4 --format '{{json .Config.Cmd}}' 2>/dev/null || true)"
 if [ -n "$cmd" ]; then
   if ! printf '%s' "$cmd" | grep -q -- '--long-prefill-token-threshold [1-9]'; then
+    hol_ok=0
     emit "WARN hol-revert: running vllm-dsv4 is missing a positive --long-prefill-token-threshold (Caveat A) — short-request TTFT will regress under long prefills"
   fi
 else
   emit "note: vllm-dsv4 not inspectable (not running?)"
 fi
 
-# --- 2. scrape /metrics ---
+# --- 2. scrape /metrics (with boot-grace + streak before Telegram WARN) ---
 metrics="$(curl -fsS --max-time 5 "http://127.0.0.1:$API_PORT/metrics" 2>/dev/null || true)"
 if [ -z "$metrics" ]; then
-  emit "WARN health: 127.0.0.1:$API_PORT/metrics unreachable"
+  age="$(container_age_secs)"
+  fails="$(streak_get health_fails)"
+  fails=$(( fails + 1 ))
+  streak_set health_fails "$fails"
+  # Reset TTFT streak on outage so a post-boot first request doesn't inherit it.
+  streak_set ttft_cont 0
+
+  if [ "$age" -gt 0 ] && [ "$age" -lt "$BOOT_GRACE_SECS" ]; then
+    emit "note: health: metrics unreachable during boot/warmup (container age ${age}s < ${BOOT_GRACE_SECS}s grace) — not alerting"
+  elif [ "$fails" -lt "$HEALTH_FAIL_STREAK" ]; then
+    emit "note: health: metrics unreachable (streak ${fails}/${HEALTH_FAIL_STREAK}) — not alerting yet"
+  else
+    emit "WARN health: 127.0.0.1:$API_PORT/metrics unreachable for ${fails} consecutive scrapes (~$(( fails * 45 ))s)"
+  fi
   exit 0
+fi
+streak_set health_fails 0
+
+# --- 2b. capacity: requests waiting specifically on KV capacity (reason label) ---
+capacity_waiting="$(printf '%s\n' "$metrics" | awk '
+  /^#/ { next }
+  /^vllm:num_requests_waiting_by_reason(\{|[ \t])/ && /reason="capacity"/ { sum += $NF }
+  END { printf "%.0f", sum + 0 }
+')"
+if [ "${capacity_waiting:-0}" -gt 0 ] 2>/dev/null; then
+  emit "WARN capacity: ${capacity_waiting} request(s) waiting on KV capacity"
 fi
 
 # --- 3. parse + interval-delta + thresholds ---
-# NOTE: metrics go through a TEMP FILE (argv), not stdin — `python3 - <<'PY'`
-# already consumes stdin as the program source, so a stdin pipe would be ignored.
+# Analyzer lives in metrics-watch-analyze.py (keeps bash portable; avoids a
+# giant heredoc inside $() that macOS bash 3.2 mis-parses). Metrics go via a
+# TEMP FILE argv so the analyzer never has to share stdin with a heredoc.
 mtmp="$(mktemp)"
 printf '%s' "$metrics" > "$mtmp"
-out="$(python3 - "$STATE" "$TTFT_WARN_MS" "$WAIT_WARN" "$KVUTIL_WARN" "$ACCEPT_WARN" "$MIN_DRAFT" "$mtmp" <<'PY'
-import json, re, sys
-
-state_path = sys.argv[1]
-TTFT_WARN_MS = float(sys.argv[2]); WAIT_WARN = float(sys.argv[3])
-KVUTIL_WARN = float(sys.argv[4]); ACCEPT_WARN = float(sys.argv[5]); MIN_DRAFT = float(sys.argv[6])
-metrics_path = sys.argv[7]
-
-LINE = re.compile(r'^(\S+?)(\{[^}]*\})?\s+([0-9eE.+-]+)\s*$')
-fam = {}
-for line in open(metrics_path, encoding="utf-8"):
-    line = line.strip()
-    if not line or line.startswith("#"):
-        continue
-    m = LINE.match(line)
-    if not m:
-        continue
-    name, val = m.group(1), m.group(3)
-    try:
-        fam.setdefault(name, 0.0)
-        fam[name] += float(val)   # sum all label series for scalar families
-    except ValueError:
-        pass
-
-def g(name):
-    return fam.get(name, 0.0)
-
-cur = {
-    "ttft_sum": g("vllm:time_to_first_token_seconds_sum"),
-    "ttft_count": g("vllm:time_to_first_token_seconds_count"),
-    "e2e_sum": g("vllm:e2e_request_latency_seconds_sum"),
-    "e2e_count": g("vllm:e2e_request_latency_seconds_count"),
-    "accepted": g("vllm:spec_decode_num_accepted_tokens_total"),
-    "draft": g("vllm:spec_decode_num_draft_tokens_total"),
-    "preempt": g("vllm:num_preemptions_total"),
-}
-waiting = g("vllm:num_requests_waiting")
-running = g("vllm:num_requests_running")
-kv_util = g("vllm:kv_cache_usage_perc")
-
-try:
-    prev = json.load(open(state_path))
-except Exception:
-    prev = None
-
-warns, ttft_iv, e2e_iv, accept_iv, preempt_d = [], None, None, None, None
-if prev:
-    d_ttft_c = cur["ttft_count"] - prev.get("ttft_count", 0)
-    d_ttft_s = cur["ttft_sum"] - prev.get("ttft_sum", 0)
-    d_e2e_c = cur["e2e_count"] - prev.get("e2e_count", 0)
-    d_e2e_s = cur["e2e_sum"] - prev.get("e2e_sum", 0)
-    d_acc = cur["accepted"] - prev.get("accepted", 0)
-    d_draft = cur["draft"] - prev.get("draft", 0)
-    preempt_d = cur["preempt"] - prev.get("preempt", 0)
-    if d_ttft_c > 0:
-        ttft_iv = d_ttft_s / d_ttft_c * 1000.0
-    if d_e2e_c > 0:
-        e2e_iv = d_e2e_s / d_e2e_c * 1000.0
-    if d_draft >= MIN_DRAFT:
-        accept_iv = d_acc / d_draft if d_draft > 0 else None
-
-# thresholds (only alert on signals we actually have this interval)
-if ttft_iv is not None and ttft_iv > TTFT_WARN_MS:
-    warns.append(f"WARN ttft: interval-mean TTFT {ttft_iv:.0f} ms > {TTFT_WARN_MS:.0f} ms (HoL regression? check --long-prefill-token-threshold)")
-if waiting > WAIT_WARN:
-    warns.append(f"WARN queue: {waiting:.0f} requests waiting > {WAIT_WARN:.0f} (saturation / head-of-line)")
-if kv_util > KVUTIL_WARN:
-    warns.append(f"WARN kv: kv_cache_usage_perc {kv_util:.3f} > {KVUTIL_WARN:.2f} (OOM risk)")
-if accept_iv is not None and accept_iv < ACCEPT_WARN:
-    warns.append(f"WARN spec-decode: interval acceptance {accept_iv:.3f} < {ACCEPT_WARN:.2f} (MTP health)")
-if preempt_d is not None and preempt_d > 0:
-    warns.append(f"WARN preempt: {preempt_d:.0f} preemptions this interval (concurrency thrash at 1M ctx)")
-
-def f(x, nd=1):
-    return "n/a" if x is None else f"{x:.{nd}f}"
-summary = (f"SUMMARY ttft_iv_ms={f(ttft_iv,0)} e2e_iv_ms={f(e2e_iv,0)} accept_iv={f(accept_iv,3)} "
-           f"waiting={waiting:.0f} running={running:.0f} kv_util={kv_util:.3f} preempt_d={f(preempt_d,0)}")
-
-for w in warns:
-    print(w)
-print(summary)
-
-try:
-    json.dump(cur, open(state_path, "w"))
-except Exception:
-    pass
-PY
-)"
+out="$(python3 "$KIT/metrics-watch-analyze.py" \
+  "$STATE" "$PROBE_STATE" \
+  "$TTFT_WARN_MS" "$TTFT_HOL_MS" "$WAIT_WARN" "$KVUTIL_WARN" "$ACCEPT_WARN" "$MIN_DRAFT" \
+  "$hol_ok" "$mtmp" || true)"
 rm -f "$mtmp"
 
-# route analyzer output (WARN → stderr+log, SUMMARY → log)
+# route analyzer output + apply TTFT contention streak
+ttft_contend_line=""
 if [ -n "$out" ]; then
   while IFS= read -r line; do
-    [ -n "$line" ] && emit "$line"
+    [ -z "$line" ] && continue
+    case "$line" in
+      TTFT_CONTEND*)
+        ttft_contend_line="$line"
+        ;;
+      *)
+        emit "$line"
+        ;;
+    esac
   done <<< "$out"
+fi
+
+if [ -n "$ttft_contend_line" ]; then
+  # TTFT_CONTEND hol|elev ttft_iv_ms=N waiting=N
+  kind="$(printf '%s' "$ttft_contend_line" | awk '{print $2}')"
+  detail="$(printf '%s' "$ttft_contend_line" | sed 's/^TTFT_CONTEND [^ ]* //')"
+  cont="$(streak_get ttft_cont)"
+  cont=$(( cont + 1 ))
+  streak_set ttft_cont "$cont"
+  if [ "$cont" -lt "$TTFT_STREAK" ]; then
+    emit "note: ttft contention (${kind}) ${detail} (streak ${cont}/${TTFT_STREAK}) — not alerting yet"
+  else
+    if [ "$kind" = "hol" ]; then
+      emit "WARN ttft: interval-mean TTFT high under queue pressure (${detail}) — likely HoL / severe starvation (check --long-prefill-token-threshold)"
+    else
+      emit "WARN ttft: interval-mean TTFT elevated under queue pressure (${detail}) — short requests waiting behind long prefill"
+    fi
+  fi
+else
+  streak_set ttft_cont 0
 fi
 
 # --- simple log rotation ---

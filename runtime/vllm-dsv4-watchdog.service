@@ -3,4 +3,8 @@ Description=vLLM DSv4 head inference watchdog (restarts head when /health lies)
 
 [Service]
 Type=oneshot
+# oneshot disables the default start timeout, but cap explicitly anyway:
+# worst case = probe 90s + triage (scrape 10 + retry 30 + scrape 10) + bounce
+# (stop wait 90s + worker ssh + head start) ≈ 4-5 min. 600s clears it.
+TimeoutStartSec=600
 ExecStart=/usr/bin/bash %h/dgx-cluster/runtime/watchdog.sh

@@ -37,12 +37,15 @@ print_prefix_cache_hit_rate() {
   local metrics hit
   metrics="$(ssh "$CLUSTER_USER@$HEAD_HOST" "curl -fsS --max-time 5 http://127.0.0.1:$API_PORT/metrics 2>/dev/null" 2>/dev/null || true)"
   # V1 vLLM exposes hits/queries counters, not a hit_rate gauge → compute the ratio.
-  # Skip Prometheus '# HELP'/'# TYPE' comment lines; fall back to a hit_rate gauge if present.
+  # Current builds emit vllm:prefix_cache_{hits,queries}_total; older builds used the
+  # gpu_-prefixed names — keep both as alternatives. Skip Prometheus '# HELP'/'# TYPE'
+  # comment lines and the _created series (anchor on _total so *_queries_created can't
+  # match the queries pattern); fall back to a hit_rate gauge if present.
   hit="$(printf '%s\n' "$metrics" | awk '
     /^#/ {next}
-    /(^|[[:space:]])(vllm:)?gpu_prefix_cache_hits_total/    {h=$NF}
-    /(^|[[:space:]])(vllm:)?gpu_prefix_cache_queries_total/ {q=$NF}
-    /(^|[[:space:]])(vllm:)?gpu_prefix_cache_hit_rate/      {g=$NF}
+    /(^|[[:space:]])(vllm:)?(gpu_)?prefix_cache_hits_total([[:space:]{]|$)/    {h=$NF}
+    /(^|[[:space:]])(vllm:)?(gpu_)?prefix_cache_queries_total([[:space:]{]|$)/ {q=$NF}
+    /(^|[[:space:]])(vllm:)?(gpu_)?prefix_cache_hit_rate([[:space:]{]|$)/      {g=$NF}
     END {
       if (q+0 > 0) { printf "%.4f", h/q }
       else if (g != "") { printf "%s", g }
@@ -138,7 +141,10 @@ scrape_metrics "$metrics_before"
 eval_t0="$(now)"
 
 run_prompt() {
-  local name="$1" prompt="$2" assert_mode="$3" max_tokens="${4:-800}"
+  # Default raised 800->2048 (2026-07-11): with DSPARK_REASONING=on, effort=high can burn
+  # >800 tokens inside <think> before any content — python30 hit finish:length with EMPTY
+  # content (reasoning-mode caveat: cap must clear the <think> block — docs/06-reasoning-mode.md). Cap must clear reasoning + answer.
+  local name="$1" prompt="$2" assert_mode="$3" max_tokens="${4:-2048}"
   local payload="$WORKDIR/$name.json" response="$WORKDIR/$name.out" http="$WORKDIR/$name.http"
   python3 - "$payload" "$SERVED_MODEL_NAME" "$prompt" "$max_tokens" <<'PY'
 import json, sys
@@ -264,7 +270,7 @@ results="$WORKDIR/results.tsv"
 : > "$results"
 run_prompt arithmetic "What is 2+2? Reply with only the answer." contains4 >> "$results" || fail "arithmetic request failed" "inspect API logs"
 run_prompt summary "Summarize why RDMA matters for distributed inference in one sentence." nonempty >> "$results" || fail "summary request failed" "inspect API logs"
-run_prompt python30 "Write a 30-line Python function that validates and normalizes a list of host records." nonempty >> "$results" || fail "python request failed" "inspect API logs"
+run_prompt python30 "Write a 30-line Python function that validates and normalizes a list of host records." nonempty 4096 >> "$results" || fail "python request failed" "inspect API logs"
 run_prompt json "Return exactly valid JSON with keys status and reason. No markdown." json >> "$results" || fail "JSON request failed" "inspect API logs"
 run_prompt story "Write a 200-word story about a quiet datacenter cutover." nonempty >> "$results" || fail "story request failed" "inspect API logs"
 run_toolcall >> "$results" || fail "tool-call request failed" "inspect API logs"
@@ -277,7 +283,7 @@ payload = {
     "model": model,
     "messages": [{"role": "user", "content": "Write a 200-word story about a quiet datacenter cutover."}],
     "temperature": 0,
-    "max_tokens": 800,
+    "max_tokens": 2048,
 }
 json.dump(payload, open(path, "w", encoding="utf-8"))
 PY
@@ -301,6 +307,14 @@ import json, sys
 print(json.load(open(sys.argv[1], encoding="utf-8")).get("usage", {}).get("completion_tokens", 0))
 PY
 )"
+  # Empty-content guard (2026-07-11): garble_check treats empty content as clean,
+  # so a reasoning-truncated reply (finish:length mid-<think>, CAVEAT 1) would
+  # silently pass here — fail it explicitly, matching run_prompt's guard.
+  python3 - "$WORKDIR/par-$i.out" <<'PY' || con_pass=fail
+import json, sys
+content = json.load(open(sys.argv[1], encoding="utf-8"))["choices"][0]["message"].get("content") or ""
+raise SystemExit(0 if content.strip() else 1)
+PY
   garble_check "$WORKDIR/par-$i.out" || con_pass=fail
   con_tokens=$(( con_tokens + tokens ))
 done

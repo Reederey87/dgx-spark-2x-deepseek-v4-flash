@@ -97,13 +97,30 @@ while inference hangs** (the API survived, the engine didn't). So the watchdog (
 tests *real* inference:
 
 - If `/health` is **down**, exit — startup isn't finished, not our problem.
-- If `/health` is **up** but a **1-token completion times out**, do an **ordered pair-bounce**:
+- If `/health` is **up** but a **1-token completion times out**, it first **triages saturation
+  vs wedge** before doing anything destructive (added after two production incidents where the
+  bounce killed 3–4 in-flight long-context generations that were merely KV-starved, not hung):
+  - Scrape `/metrics`. If `kv_cache_usage_perc < 0.95` (or the scrape fails) → treat as a
+    **wedge** → bounce.
+  - If KV is **saturated (≥ 0.95)** → **retry the 1-token canary with a 30 s cap**. Success
+    means admission recovered → no bounce. (Admission recovery is the real health signal — an
+    aggregate token counter can't prove the canary path works while other requests drain.)
+  - If the retry also fails → compare `generation_tokens_total` across the 30 s window. Still
+    advancing = **saturation**: log it, count it in `.watchdog-satn.state`, and **don't bounce**
+    — vLLM's V1 scheduler never preempts a running request to admit a capacity-blocked waiter,
+    so a full pool starves new requests while old ones finish; killing everything only makes it
+    worse. After **3 consecutive** saturation verdicts (~15 min) it escalates to a bounce anyway
+    (livelock backstop). Counter frozen = **wedge** → bounce.
+- The **ordered pair-bounce** itself is unchanged:
   1. **Stop the head FIRST** — its stale rendezvous store on `:25000` must be gone before the
      worker restarts, or the fresh worker joins the dead group and zombifies.
   2. **Restart the worker** (headless; waits for a master).
   3. **Start the head** — preflight re-checks the worker, then re-rendezvouses.
 
-It `reset-failed`s throughout, and the 5-min timer period is itself the rate limiter.
+It `reset-failed`s throughout, and the 5-min timer period is itself the rate limiter. The unit
+carries an explicit `TimeoutStartSec=600` (oneshot disables the default; worst-case probe +
+triage + bounce is ~4–5 min). Each cycle records exactly **one** probe outcome to
+`.watchdog-probe.state` (the metrics watcher's canary logic depends on that invariant).
 
 ## Daily ops
 

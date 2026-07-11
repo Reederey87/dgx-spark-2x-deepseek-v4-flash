@@ -71,11 +71,25 @@ scrape misses. It does two jobs.
 because preflight runs before the container exists — here we assert the fix on the process that
 is actually serving.
 
-**2. Interval-delta metrics.** It scrapes `/metrics` and, against a small state file from the
-previous tick, computes **interval** deltas (not cumulative-since-boot): mean TTFT, mean e2e
-latency, and spec-decode acceptance for the interval, plus current waiting / KV util /
-preemptions. It WARNs on any threshold breach. A HoL revert shows up here too — interval-mean
-TTFT spikes if short requests start queueing behind long prefills mid-run.
+**2. Interval-delta metrics.** It scrapes `/metrics` and hands the text to
+`metrics-watch-analyze.py`, which, against a small state file from the previous tick, computes
+**interval** deltas (not cumulative-since-boot): mean TTFT, mean e2e latency, and spec-decode
+acceptance for the interval, plus current waiting / KV util / preemptions, the interval
+**prefix-cache hit rate** (`prefix_hit_iv`, log-only — worth watching because of the documented
+MTP × prefix-cache interaction, vLLM #38182), and the number of **long prefills (>30 s)** that
+landed in the interval (`long_prefills_iv`). It WARNs on any threshold breach, and additionally
+WARNs when requests are waiting specifically on **KV capacity**
+(`num_requests_waiting_by_reason{reason="capacity"}` — the direct saturation signal). A HoL
+revert shows up here too — interval-mean TTFT spikes if short requests start queueing behind
+long prefills mid-run. When **≥ 2 long prefills overlap one interval** it emits a **log-only
+note** (`capacity-b`): that's the one HoL case the threshold lever can't close (two long
+prefills together refill the whole token budget), so the note counts how often it actually
+happens before anyone builds client-side request shaping for it.
+
+The analyzer also correlates against the watchdog's `.watchdog-probe.state`: intervals whose
+only traffic was the watchdog's own 1-token canary are marked **canary-only** (`ttft_iv_ms=n/a`
++ `ttft_probe_ms=…`) instead of being reported as user latency — otherwise an idle box looks
+permanently "busy" at canary latency and TTFT alerts fire on the canary itself.
 
 Thresholds are env-tunable:
 
@@ -85,6 +99,7 @@ Thresholds are env-tunable:
 | `WAIT_WARN` | `5` | sustained requests waiting (saturation / head-of-line) |
 | `KVUTIL_WARN` | `0.95` | KV pool pressure (OOM risk) |
 | `ACCEPT_WARN` | `0.30` | spec-decode interval acceptance floor (MTP health) |
+| — (fixed) | `>0` | any request waiting with `reason="capacity"` (KV-pool saturation, the pre-cursor to the watchdog's saturation triage) |
 | `NOTIFY_COOLDOWN` | `900` | seconds between reminders for a persistent condition (see alerting) |
 
 It deliberately **avoids a full Prometheus/Grafana TSDB** — a time-series database, scraper, and
@@ -133,11 +148,22 @@ After the head (re)starts, the first real request pays a cold-path tax. `warmup.
 It is wired as a **non-fatal, backgrounded `ExecStartPost`** on the head unit — backgrounded so
 it never delays the unit reaching `active` or eats into `TimeoutStartSec`, and purely additive so
 a failure here can **never** affect serving. Once `/health` returns 200 (bounded wait) it fires
-two probes against the loopback API:
+four probes against the loopback API:
 
 1. **One plain chat** — warms the decode / first-token path.
 2. **One `tool_choice=auto` call** — warms the model's tool-**parser** path (what the downstream
    client actually hits after a self-heal).
+3. **One >4096-token prefill** — compiles the **long-prefill chunk-metadata Triton kernels**
+   (`_pack_topk_routes_*`, `_build/_compute_prefill_*_metadata`). Without it, vLLM's JIT monitor
+   shows these compiling **during the first real long prompt** 10–30 min post-boot — a latency
+   spike on exactly the request you care about.
+4. **One `temperature=1.0` sampling call** — the spec-decode **rejection-sampling kernels**
+   (`sample_recovered_tokens`, `rejection_random_sample`) are only reachable with temperature>0;
+   the greedy probes above never touch them.
+
+The Triton JIT cache is **persistent** (`TRITON_CACHE_DIR` lives under the hf-cache bind), so
+these compiles are per-new-*shape*, not per-boot — the warm-up just guarantees the common shapes
+are compiled before real traffic hits them.
 
 It's a **parser** warm-up, not an FSM warm-up, on purpose: with `tool_choice=auto` vLLM does
 **not** compile an xgrammar FSM — the parser extracts tool calls from the model's free text, so
