@@ -22,6 +22,9 @@ Attributed upstreams:
   - MiaAI-Lab                    — dual-Spark packaging and worker-first launch
   - rafaelcaricio                — DSpark vLLM integration
   - NVIDIA dgx-spark-playbooks   — the official "connect two Sparks" guidance
+  - FlashInfer                   (Apache-2.0)   — PR #3615 / commit 49f2abf,
+                                   vendored as a source patch for the SM120/121
+                                   multi-CTA radix top-k reset-race fix
 
 These components are single-author, fast-moving, community efforts and are
 provided by their authors without warranty. Validate on your own hardware.

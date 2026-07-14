@@ -31,7 +31,10 @@ and `mtu: 9000`, and keeps the QSFP interfaces off the default route.
 NCCL uses two independent paths, and it helps to keep them straight:
 
 - **Bootstrap / control plane → sockets**, pinned to rail 1 via `NCCL_SOCKET_IFNAME`
-  (`enp1s0f1np1`). This is also where the TP rendezvous rides — `MASTER_ADDR` = `HEAD_R1`.
+  (`enp1s0f1np1`). vLLM's CPU-side process group is separately pinned with
+  `GLOO_SOCKET_IFNAME` (normally the same interface); without it, Gloo may follow hostname
+  resolution onto a DHCP LAN address. The TP rendezvous also rides rail 1 —
+  `MASTER_ADDR` = `HEAD_R1`.
 - **Data path → RDMA (IB verbs)**, selected via `NCCL_IB_HCA`. The default
   `rocep1s0f1,roceP2p1s0f1` uses **both** RoCE twins for the full ~200G.
 

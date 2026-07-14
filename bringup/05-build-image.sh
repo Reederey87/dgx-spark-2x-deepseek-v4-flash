@@ -8,7 +8,7 @@ source "$KIT/../runtime/cluster.env"
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
 ssh "$CLUSTER_USER@$HEAD_HOST" \
-  "RECIPE_REPO='$RECIPE_REPO' RECIPE_SHA='$RECIPE_SHA' BASE_IMAGE_REF='$BASE_IMAGE_REF' DSPARK_VLLM_IMAGE='$DSPARK_VLLM_IMAGE' bash -s" <<'REMOTE' \
+  "RECIPE_REPO='$RECIPE_REPO' RECIPE_SHA='$RECIPE_SHA' BASE_IMAGE_REF='$BASE_IMAGE_REF' DSPARK_VLLM_IMAGE='$DSPARK_VLLM_BASE_IMAGE' bash -s" <<'REMOTE' \
   || fail "image build failed on $HEAD_HOST" "inspect ~/dspark-recipe build logs on the head node"
 set -euo pipefail
 
@@ -36,3 +36,20 @@ echo "ok: vLLM cluster flags present"
 
 docker image inspect "$DSPARK_VLLM_IMAGE" --format 'image id: {{.Id}}'
 REMOTE
+
+echo "== applying the pinned FlashInfer PR #3615 thin layer"
+rsync -a "$KIT/../patches/flashinfer-pr3615/" \
+  "$CLUSTER_USER@$HEAD_HOST:~/flashinfer-pr3615/" \
+  || fail "FlashInfer patch sync failed" "check control-host SSH access"
+ssh "$CLUSTER_USER@$HEAD_HOST" \
+  "BASE_IMAGE='$DSPARK_VLLM_BASE_IMAGE' PATCHED_TAG='$DSPARK_VLLM_IMAGE' bash ~/flashinfer-pr3615/build-patched-image.sh" \
+  || fail "FlashInfer patched image build failed" "inspect the patch apply/build output"
+
+# A prior unpatched sampling JIT object must not survive the source overlay.
+ssh "$CLUSTER_USER@$HEAD_HOST" \
+  "HF_CACHE='$HF_CACHE' DSPARK_VLLM_IMAGE='$DSPARK_VLLM_IMAGE' bash ~/flashinfer-pr3615/clear-sampling-cache.sh" \
+  || fail "head sampler JIT-cache clear failed" "verify HF_CACHE permissions and the patched image"
+
+ssh "$CLUSTER_USER@$HEAD_HOST" \
+  "docker image inspect '$DSPARK_VLLM_IMAGE' --format 'final image id: {{.Id}}'" \
+  || fail "could not inspect final image" "verify the FlashInfer thin layer was tagged"

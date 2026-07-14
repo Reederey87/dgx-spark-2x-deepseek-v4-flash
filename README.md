@@ -78,7 +78,7 @@ bash bringup/01-verify-fabric.sh     # QSFP addressing, MTU 9000, RoCE up, jumbo
 bash bringup/02-setup-cluster-ssh.sh # node-to-node SSH over the QSFP rail IPs
 bash bringup/03-build-nccl-tests.sh  # NCCL v2.30u1 + nccl-tests at sm_121, both nodes
 bash bringup/04-run-nccl-bench.sh    # A/B the RDMA arms; put the winner in cluster.env (gate ≥15 GB/s)
-bash bringup/05-build-image.sh       # build the DSpark vLLM image on the head (pin BASE_IMAGE_DIGEST)
+bash bringup/05-build-image.sh       # build stage-c + the pinned FlashInfer #3615 safety layer
 bash bringup/06-distribute-image.sh  # copy the image head → worker over QSFP; verify IDs match
 bash bringup/07-download-weights.sh  # pull public weights to the head's token-free HF cache
 bash bringup/08-distribute-weights.sh # rsync weights head → worker; verify file/byte parity
@@ -98,7 +98,7 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
   -d '{
         "model": "deepseek-v4-flash-dspark",
         "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
-        "max_tokens": 8, "temperature": 0
+        "max_tokens": 1024, "temperature": 1.0
       }'
 ```
 
@@ -107,6 +107,8 @@ up/down), `cluster-enable.sh` / `cluster-disable.sh` (toggle boot-persistence to
 `metrics.sh`. A `vllm-metrics-watch` user timer on the head runs a read-only observability
 watcher (with optional Telegram alerts), and a non-fatal readiness warm-up primes the decode and
 tool-parser paths after each head restart — see [docs/07](docs/07-observability-and-warmup.md).
+An optional Xid monitor is installed disabled on both nodes; it captures hardware-fault evidence
+and alerts but categorically never restarts vLLM.
 
 ---
 
@@ -120,8 +122,10 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MAX_MODEL_LEN` | `1048576` | Context ceiling. `1048576` is the model's true YaRN ceiling (65536×16). Higher boots but extrapolates past calibration. First rung of the OOM ladder. |
 | `MAX_NUM_SEQS` | `12` | Concurrent streams. Drop toward `4` → `1` under memory pressure. |
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
-| `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool. Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
-| `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. `3` + probabilistic draft is the garble fix — **do not** revert to greedy `5`. See `docs/03`. |
+| `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool (~2.45M measured KV tokens). Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
+| `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. Probabilistic `5` was garble-clean but lost KV headroom and throughput; greedy `5` is unsafe. Keep `3`. See `docs/03`. |
+| `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
+| `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
 | `DSPARK_REASONING` | `on` | Thinking mode (**production default** — what the Performance numbers were measured at). `on` = server-default thinking + `temp/top_p 1.0`; read the CoT from **`message.reasoning`** (not `reasoning_content`). `off` = non-think greedy (`temp 0`), fastest first token. **With `on`, give requests a generous `max_tokens` (≥1024)** or `content` comes back empty (the max_tokens trap). See `docs/06`. |
 | `NCCL_IB_HCA` | `rocep1s0f1,roceP2p1s0f1` | RDMA data path. Default = both RoCE twins (~200G). `bringup/04-run-nccl-bench.sh` A/B-tests this. |
@@ -143,7 +147,7 @@ Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` aga
 | **TTFT — idle** | **~150 ms** |
 | **TTFT — during a live ~130K-token prefill** | **~5.9 s with the head-of-line fix, vs ~59 s without** (≈10×; see [docs/07](docs/07-observability-and-warmup.md)) |
 | Latency p50 / p95 / p99 (short-request burst) | ~620 / 630 / 630 ms |
-| KV cache pool | ~2.0M tokens @ util 0.80 (~2.8M @ the 0.85 default for a dedicated pair) |
+| KV cache pool | ~2.0M tokens @ util 0.80; **2.45M measured** @ the 0.85 dedicated-pair default |
 | Startup (worker → head, to `/health` 200) | ~5–10 min (warm ~6) |
 
 `eval-cluster.sh` prints all of the above plus the composite in one run; `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes.
@@ -161,6 +165,7 @@ Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` aga
 | [docs/05-troubleshooting.md](docs/05-troubleshooting.md) | OOM ladder, NCCL bandwidth, garbled output, restart deadlocks, and the security/listener audit. |
 | [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
 | [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, Telegram alerts, readiness warm-up, and the eval composite score. |
+| [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The complete A/B decision ledger, vLLM 0.25.0 NOT-READY result, production backports, and recheck triggers. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---
