@@ -56,7 +56,8 @@ check_hol_threshold() {
 # as opaque multi-node rendezvous hangs or silent eager decode.
 check_serve_invariants() {
   local v value required_capture
-  [ "${MASTER_ADDR:-}" = "${HEAD_R1:-}" ] \
+  [ -n "${MASTER_ADDR:-}" ] && [ -n "${HEAD_R1:-}" ] \
+    && [ "$MASTER_ADDR" = "$HEAD_R1" ] \
     || { echo "preflight FAIL: MASTER_ADDR must equal HEAD_R1 (got ${MASTER_ADDR:-<unset>} vs ${HEAD_R1:-<unset>})" >&2; exit 1; }
   [ -n "${GLOO_SOCKET_IFNAME:-}" ] \
     || { echo "preflight FAIL: GLOO_SOCKET_IFNAME is empty; pin Gloo to the QSFP control rail" >&2; exit 1; }
@@ -68,6 +69,9 @@ check_serve_invariants() {
         exit 1
         ;;
     esac
+    # Bash treats a leading zero as octal in arithmetic contexts. Normalize
+    # validated decimal input (including values such as 08) before using it.
+    printf -v "$v" '%d' "$((10#$value))"
   done
   required_capture=$(( MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1) ))
   if [ "$MAX_CUDAGRAPH_CAPTURE_SIZE" -lt "$required_capture" ]; then

@@ -48,9 +48,11 @@ grep -Fq 'capture and notification suppressed' <<<"$xid_bad" || fail "Xid test m
 xid_info="$(bash runtime/xid-monitor.sh --test \
   'NVRM: Xid (PCI:0000:0f:00): 13, synthetic classification test' 2>&1)"
 grep -Fq 'Xid 13 seen (log-only)' <<<"$xid_info" || fail "Xid 13 classification failed"
-if XID_NOTIFY_COOLDOWN_SEC=invalid bash runtime/xid-monitor.sh --test >/dev/null 2>&1; then
+if invalid_cooldown="$(XID_NOTIFY_COOLDOWN_SEC=invalid bash runtime/xid-monitor.sh --test 2>&1)"; then
   fail "invalid Xid cooldown was accepted"
 fi
+grep -Fq 'XID_NOTIFY_COOLDOWN_SEC must be a non-negative integer' <<<"$invalid_cooldown" \
+  || fail "invalid Xid cooldown failed without the expected diagnostic"
 echo "ok: Xid classification"
 
 # Render and parse Compose in an isolated copy so validation never creates a
