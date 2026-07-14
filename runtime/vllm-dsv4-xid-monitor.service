@@ -1,0 +1,14 @@
+# Optional user service for BOTH nodes. Installed by install-services.sh but
+# intentionally left disabled until the operator opts in.
+[Unit]
+Description=DGX Spark NVIDIA Xid hardware-fault monitor (alert-only)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/dgx-cluster/runtime
+ExecStart=/usr/bin/bash %h/dgx-cluster/runtime/xid-monitor.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

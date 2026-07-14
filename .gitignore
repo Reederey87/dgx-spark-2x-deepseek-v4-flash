@@ -22,6 +22,7 @@ nvsync*
 *.log
 nccl-bench-*
 /tmp/
+runtime/.xid-test-*
 
 # OS / editor cruft.
 .DS_Store

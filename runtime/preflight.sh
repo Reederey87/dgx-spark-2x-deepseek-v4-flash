@@ -52,6 +52,34 @@ check_hol_threshold() {
   return 0
 }
 
+# Fail early on distributed/config invariants whose violations otherwise surface
+# as opaque multi-node rendezvous hangs or silent eager decode.
+check_serve_invariants() {
+  local v value required_capture
+  [ -n "${MASTER_ADDR:-}" ] && [ -n "${HEAD_R1:-}" ] \
+    && [ "$MASTER_ADDR" = "$HEAD_R1" ] \
+    || { echo "preflight FAIL: MASTER_ADDR must equal HEAD_R1 (got ${MASTER_ADDR:-<unset>} vs ${HEAD_R1:-<unset>})" >&2; exit 1; }
+  [ -n "${GLOO_SOCKET_IFNAME:-}" ] \
+    || { echo "preflight FAIL: GLOO_SOCKET_IFNAME is empty; pin Gloo to the QSFP control rail" >&2; exit 1; }
+  for v in MAX_NUM_SEQS MTP_NUM_TOKENS MAX_CUDAGRAPH_CAPTURE_SIZE; do
+    value="${!v:-}"
+    case "$value" in
+      ''|*[!0-9]*)
+        echo "preflight FAIL: $v must be a non-negative integer (got '${value:-<unset>}')" >&2
+        exit 1
+        ;;
+    esac
+    # Bash treats a leading zero as octal in arithmetic contexts. Normalize
+    # validated decimal input (including values such as 08) before using it.
+    printf -v "$v" '%d' "$((10#$value))"
+  done
+  required_capture=$(( MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1) ))
+  if [ "$MAX_CUDAGRAPH_CAPTURE_SIZE" -lt "$required_capture" ]; then
+    echo "preflight WARN: MAX_CUDAGRAPH_CAPTURE_SIZE=$MAX_CUDAGRAPH_CAPTURE_SIZE is below MAX_NUM_SEQS*(MTP_NUM_TOKENS+1)=$required_capture; high-concurrency spec decode may fall back to eager." >&2
+  fi
+  echo "preflight ok: distributed invariants (Gloo=$GLOO_SOCKET_IFNAME, capture=$MAX_CUDAGRAPH_CAPTURE_SIZE)"
+}
+
 case "$ROLE" in
   head)   MY_R1="$HEAD_R1";   PEER_R1="$WORKER_R1" ;;
   worker) MY_R1="$WORKER_R1"; PEER_R1="$HEAD_R1" ;;
@@ -77,6 +105,7 @@ docker rm -f vllm-dsv4 >/dev/null 2>&1 || true
 
 # Non-fatal: warn (never fail) if the prefill HoL fix has come unwired.
 check_hol_threshold
+check_serve_invariants
 
 if [ "$ROLE" = "head" ]; then
   # Optional memory-pool guard: if a conflicting single-node model service is

@@ -202,7 +202,7 @@ what the DSA indexer + MTP draft/verify loop run against.
 
 ---
 
-## The garble fix (2026-07-03) — do not revert
+## The garble fix (2026-07-03) — preserve probabilistic sampling
 
 Cold-start **tool-call / Chinese-character garble under concurrency** was traced to a **greedy**
 draft of length 5. The fix, which is the current default, is:
@@ -211,13 +211,27 @@ draft of length 5. The fix, which is the current default, is:
 - **probabilistic** draft (`"draft_sample_method":"probabilistic"` in the speculative config), and
 - the **FlashInfer sampler**: `VLLM_USE_FLASHINFER_SAMPLER=1`.
 
-**Do NOT revert to greedy 5.** This narrows the same mismatch window that `DSPARK_SLOT_CLAMP`
+**Do NOT revert to greedy 5.** A later controlled A/B showed that *probabilistic* MTP=5 is
+garble-clean, so draft length alone was not the corruption cause. It still lost: the KV pool
+fell 1.716M → 1.578M, later draft-position acceptance decayed to 16.6% / 8.8%, and neither
+single-stream nor concurrent throughput improved enough to pay for it. Production therefore
+keeps MTP=3. This narrows the same mismatch window that `DSPARK_SLOT_CLAMP`
 guards — see [`docs/LONG_CONTEXT_CRASH_FIX.md`](./LONG_CONTEXT_CRASH_FIX.md). If you still see
 garbled output, walk the ladder in [`docs/05-troubleshooting.md`](./05-troubleshooting.md).
 
-The default profile is greedy `temp 0`. Enabling **reasoning mode** (`DSPARK_REASONING=on`) moves
-sampling to the official V4-Flash reasoning point (`temp/top_p 1.0`), so it is a garble-gated switch —
-re-run `eval-cluster.sh` after flipping it. See [`docs/06-reasoning-mode.md`](./06-reasoning-mode.md).
+The default profile has **reasoning enabled** and uses the official V4-Flash reasoning point
+(`temp/top_p 1.0`). Reasoning consumes output budget before visible content, so clients should
+allow at least 1024 output tokens; a tiny cap can produce empty `content`. Setting
+`DSPARK_REASONING=off` selects non-thinking greedy sampling. Re-run `eval-cluster.sh` after any
+change. See [`docs/06-reasoning-mode.md`](./06-reasoning-mode.md).
+
+## FlashInfer sampler hang fix
+
+The sampler remains enabled because it is part of the known-good DSpark sampling path, but the
+stage-c image's FlashInfer 0.6.12 source contains a multi-CTA radix top-k reset race on SM120/121.
+This kit therefore builds `dspark-nvfp4-stage-c-fi3615`, a thin source overlay carrying FlashInfer
+PR #3615 / commit `49f2abf`, and removes the stale sampler JIT object before serving. The unpatched
+stage-c tag remains available for rollback. See [`patches/flashinfer-pr3615`](../patches/flashinfer-pr3615/README.md).
 
 ## The B12X MoE path — the single biggest speed lever
 
@@ -240,7 +254,7 @@ tradeoff, not a free upgrade — if you're chasing decode throughput, this is a 
 
 ## Provenance, alternatives, and upstream convergence
 
-This repo **pins the currently-proven tonyd2wild recipe + `dspark-nvfp4-stage-c` image on
+This repo **pins the currently-proven tonyd2wild recipe + `dspark-nvfp4-stage-c-fi3615` image on
 purpose** (see [`NOTICE`](../NOTICE)). Known alternatives that this kit does **not**
 ship:
 
@@ -254,6 +268,7 @@ a moving target:
 - **Sparse-MLA-on-SM12x is going mainline** via PRs **#38476 / #47629** (plus **#43477** for the
   FP8-KV path).
 
-A rebase onto **vLLM ≥ 0.24.1** could retire much of this fork/patch/transplant stack. **Track
-those PRs before deep-pinning any one prebuilt image** — the right long-term move is to follow
-this upstream rather than to over-invest in the current stage-c image.
+vLLM 0.25.0 shipped official DSpark support, but the measured two-node rebase was **NOT-READY**:
+quality gates passed and C1 improved 4.3%, while the real C8 workload regressed 9.2%. Keep the
+proven image as the default until a point release or a dedicated profile identifies and closes
+that concurrent-batching gap. See [08](08-optimization-and-vllm-025.md) for the full ledger.

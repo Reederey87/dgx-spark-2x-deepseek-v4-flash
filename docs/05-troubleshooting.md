@@ -60,8 +60,9 @@ most-common cause first:
    garbage before it produces an obvious error. Rule it out first ([01](01-hardware-and-firmware.md)).
 2. **KV dtype.** Before blaming the model, drop `--kv-cache-dtype` from `nvfp4_ds_mla` to
    `fp8` and re-test. If `fp8` is coherent, the issue is in the NVFP4-KV path, not the weights.
-3. **`MTP_NUM_TOKENS`.** Confirm it is **`3`** (not `5`). `3` + probabilistic draft is the
-   DSpark garble fix — greedy `5` reintroduces it. See the garble-fix section of
+3. **`MTP_NUM_TOKENS`.** Confirm it is **`3`** and the draft method is probabilistic.
+   Probabilistic `5` tested clean but reduced KV headroom and throughput; **greedy** `5`
+   reintroduces the corruption risk. See the garble-fix section of
    [03-model-and-features.md](03-model-and-features.md).
 
 ---
@@ -79,6 +80,11 @@ bash runtime/stop-cluster.sh && bash runtime/start-cluster.sh   # the recovery h
 
 `stop-cluster.sh` stops head-first and removes both containers; `start-cluster.sh` brings the
 worker up before the head. That ordering is what clears the stale `:25000` rendezvous store.
+Never restart only the head after a stop or drain test.
+
+If boot intermittently uses a LAN path, inspect the running container for both
+`NCCL_SOCKET_IFNAME` and `GLOO_SOCKET_IFNAME`. They should name the QSFP control rail; Gloo is a
+separate CPU-side process group and is not pinned by the NCCL variable.
 
 ---
 

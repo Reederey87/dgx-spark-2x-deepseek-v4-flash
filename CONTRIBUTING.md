@@ -34,9 +34,15 @@ risk** are the most valuable.
 
 ## Testing a change
 
-There is no CI — this touches real hardware. At minimum:
+Run the offline structural checks first:
 
-1. `bash -n bringup/*.sh runtime/*.sh` on every script you touched.
+```bash
+bash tests/validate-runtime.sh
+```
+
+There is no hardware CI — this touches real machines. At minimum:
+
+1. Keep `tests/validate-runtime.sh` green (it includes `bash -n` for every shipped shell script).
 2. From `runtime/`, `docker compose --env-file .env.dspark -f docker-compose.dspark.yml config`
    parses after a `render-env.sh` run.
 3. If you changed the serve path or a tunable, re-run `09-smoke-serve.sh` and

@@ -34,6 +34,13 @@ install_node() {
     echo "ok: watchdog + metrics-watch units installed on $host"
   fi
 
+  # Install the hardware-fault monitor on both nodes, but leave it disabled.
+  # Operators opt in after reviewing docs/07; the monitor only alerts/captures
+  # logs and never restarts vLLM.
+  ssh "$CLUSTER_USER@$host" "cp '$KIT_DIR/runtime/vllm-dsv4-xid-monitor.service' ~/.config/systemd/user/ && systemctl --user daemon-reload" \
+    || fail "Xid monitor install failed on $host" "check systemd user manager"
+  echo "ok: Xid monitor unit installed (disabled) on $host"
+
   linger="$(ssh "$CLUSTER_USER@$host" "loginctl show-user '$CLUSTER_USER' --property=Linger")" \
     || fail "could not inspect linger on $host" "run 00-node-prep.sh on the node"
   [ "$linger" = "Linger=yes" ] || fail "linger is not enabled on $host" "re-run 00-node-prep.sh"
@@ -44,3 +51,4 @@ install_node "$HEAD_HOST" "vllm-dsv4-head.service"
 install_node "$WORKER_HOST" "vllm-dsv4-worker.service"
 echo "ok: services installed; units were not enabled or started"
 echo "note: enable the metrics watcher on the head with:  systemctl --user enable --now vllm-metrics-watch.timer"
+echo "note: optionally enable Xid monitoring on BOTH nodes: systemctl --user enable --now vllm-dsv4-xid-monitor.service"

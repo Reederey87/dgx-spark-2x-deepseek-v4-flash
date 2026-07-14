@@ -27,7 +27,7 @@ tuned for a **dedicated** 2× GB10 pair:
 |---|---|---|
 | `MAX_MODEL_LEN` | `1048576` | True YaRN ceiling (65536×16). First rung of the OOM ladder. |
 | `MAX_NUM_SEQS` | `12` | Concurrent streams. |
-| `GPU_MEMORY_UTILIZATION` | `0.85` | ~2.8M-token KV pool on one pair; `0.80` ≈ 2.0M when co-locating. |
+| `GPU_MEMORY_UTILIZATION` | `0.85` | 2.45M-token KV pool measured on the current image; `0.80` ≈ 2.0M when co-locating. |
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length — the garble fix (see [03](03-model-and-features.md)). |
 
 Key serve argv facts baked into the compose: `--tensor-parallel-size 2`,
@@ -43,6 +43,8 @@ Ray**. The two ranks find each other over the QSFP fabric:
   --master-port $MASTER_PORT`.
 - `MASTER_ADDR` **must equal `HEAD_R1`** (`192.168.177.10`) and `MASTER_PORT` is `25000` — the
   rendezvous rides rail 1.
+- `GLOO_SOCKET_IFNAME` pins the CPU-side coordination group to that same stable QSFP rail;
+  `NCCL_SOCKET_IFNAME` alone does not control Gloo's interface selection.
 - The **worker (rank 1) starts BEFORE the head (rank 0).** The headless worker waits for a
   master to appear; the head rendezvouses to it. Start ordering is enforced by the scripts
   and units, not left to chance.
@@ -57,6 +59,7 @@ start at boot without a login):
 | `vllm-dsv4-head.service` | head | rank 0 — runs compose, serves the API, `Restart=always`. |
 | `vllm-dsv4-worker.service` | worker | rank 1 (`--headless`), `Restart=always`. |
 | `vllm-dsv4-watchdog.service` + `.timer` | head | inference-level self-heal, every 5 min. |
+| `vllm-dsv4-xid-monitor.service` | both | optional hardware-fault capture/alert; installed disabled and never bounces vLLM. |
 
 The units reference **`%h/dgx-cluster`** — so the last path component of `KIT_DIR` **must be
 `dgx-cluster`** for the units to find `preflight.sh`, `render-env.sh`, and the compose file.
@@ -67,6 +70,12 @@ Each unit's `ExecStartPre` runs `preflight.sh <role>` then `render-env.sh <role>
 nodes (excluding docs/license/example config), installs the units into
 `~/.config/systemd/user/`, and verifies linger — but it does **not** enable or start them.
 `cluster-enable.sh` does that.
+
+The serving command also carries `--shutdown-timeout 30`. A normal SIGTERM therefore gives
+in-flight requests up to 30 seconds to finish inside vLLM, while the unit's 90-second stop
+timeout retains process/container cleanup headroom. A live three-request drain test completed
+3/3 responses before teardown. Manual recovery must still cycle the pair in order; restarting
+only the head leaves the worker holding a stale rendezvous session.
 
 ### Why cross-node coordination is script-level
 
@@ -144,7 +153,7 @@ Then `preflight.sh` **refuses to start the head** while it's active (override wi
 ## Reference behavior (observed on one pair)
 
 - **Startup:** ~5–10 min (cold ~9.5 min, warm ~5 min).
-- **KV pool:** ~2.8M tokens @ util 0.85; ~2.0M @ 0.80.
+- **KV pool:** 2.45M tokens measured @ util 0.85; ~2.0M @ 0.80.
 - **Eval:** 5/5 correctness; a **147K-token needle retrieved in ~86 s**; **~48 tok/s**
   aggregate at concurrency 3; single-stream **~22–34 tok/s**.
 - **Resilience:** unattended self-heal from a killed worker in **~11 min**; cold

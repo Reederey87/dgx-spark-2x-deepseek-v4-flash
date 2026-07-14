@@ -1,0 +1,3 @@
+# Preserve upstream patch bytes exactly; whitespace inside vendored patches is
+# part of their applicability and is validated by the patch builder.
+patches/**/*.patch -whitespace
