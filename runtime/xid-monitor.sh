@@ -17,7 +17,15 @@ else
 fi
 
 INCIDENT_DIR="${XID_INCIDENT_DIR:-$KIT/logs/xid-incidents}"
+NOTIFY_COOLDOWN_SEC="${XID_NOTIFY_COOLDOWN_SEC:-300}"
 CATASTROPHIC_XIDS=" 48 79 94 95 119 140 154 "
+
+case "$NOTIFY_COOLDOWN_SEC" in
+  ''|*[!0-9]*)
+    echo "xid-monitor: XID_NOTIFY_COOLDOWN_SEC must be a non-negative integer (got '$NOTIFY_COOLDOWN_SEC')" >&2
+    exit 1
+    ;;
+esac
 
 ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -33,7 +41,7 @@ notify_send() {
 }
 
 handle_xid() {
-  local code="$1" line="$2" host stamp cur_log prev_log
+  local code="$1" line="$2" host stamp cur_log prev_log now last last_file
   host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo unknown-host)"
 
   if [[ "$CATASTROPHIC_XIDS" != *" $code "* ]]; then
@@ -50,7 +58,21 @@ handle_xid() {
     return 0
   fi
 
-  mkdir -p "$INCIDENT_DIR" 2>/dev/null || true
+  mkdir -p "$INCIDENT_DIR" 2>/dev/null \
+    || { echo "$(ts) xid-monitor: cannot create incident directory $INCIDENT_DIR" >&2; return 1; }
+  now="$(date +%s)"
+  last_file="$INCIDENT_DIR/.last-xid-$code"
+  last=0
+  if [ -f "$last_file" ]; then
+    last="$(cat "$last_file" 2>/dev/null || echo 0)"
+    case "$last" in ''|*[!0-9]*) last=0 ;; esac
+  fi
+  if [ $((now - last)) -lt "$NOTIFY_COOLDOWN_SEC" ]; then
+    echo "$(ts) xid-monitor: Xid $code repeated within ${NOTIFY_COOLDOWN_SEC}s — capture/notify suppressed" >&2
+    return 0
+  fi
+  printf '%s\n' "$now" >"$last_file" 2>/dev/null \
+    || echo "$(ts) xid-monitor: cooldown state write failed; continuing with evidence capture" >&2
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   cur_log="$INCIDENT_DIR/${stamp}_xid${code}_current-boot.log"
   prev_log="$INCIDENT_DIR/${stamp}_xid${code}_previous-boot.log"

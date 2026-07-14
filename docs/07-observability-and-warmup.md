@@ -146,6 +146,10 @@ The repo ships `notify.env.example`; the real `notify.env` is git-ignored and ne
 the kernel journal continuously and classifies NVIDIA Xid lines. Catastrophic codes
 48/79/94/95/119/140/154 trigger immediate current/previous-boot kernel-log capture and an
 optional Telegram alert. Other Xids are log-only.
+Repeated catastrophic events are debounced per Xid code for 300 seconds by
+default (`XID_NOTIFY_COOLDOWN_SEC`), preventing one fault from filling the
+incident directory or rate-limiting alerts while still allowing a different
+catastrophic code through immediately.
 
 This monitor has a strict safety boundary: it **never** starts, stops, or restarts a vLLM unit.
 A GPU that has fallen off the bus or suffered a GSP timeout is a hardware incident, not the
