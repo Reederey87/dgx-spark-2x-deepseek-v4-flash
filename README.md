@@ -7,8 +7,12 @@ Sparks act as one inference engine; the OpenAI-compatible API is served on the h
 loopback (`127.0.0.1:8000`).
 
 This repo is **orchestration and documentation only**. It vendors no upstream source: the
-serving image is *built from* a pinned community recipe and the weights are *pulled from*
-Hugging Face at deploy time. See [NOTICE](NOTICE) for upstream attribution.
+serving image is *built from* a pinned community base and the weights are *pulled from*
+Hugging Face at deploy time. As of **2026-07-15 the default lane is vLLM 0.25.1** — a
+digest-pinned `anemll/dspark-vllm-gx10` GB10 base plus one thin upstream-fix layer (vLLM
+PR #47356). The prior vLLM 0.21.x lane stays documented and rollback-able. The full lane-change
+rationale, config deltas, hardening pass, and open gaps are in
+[docs/08](docs/08-optimization-and-vllm-025.md). See [NOTICE](NOTICE) for upstream attribution.
 
 > ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
 > single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
@@ -122,8 +126,11 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MAX_MODEL_LEN` | `1048576` | Context ceiling. `1048576` is the model's true YaRN ceiling (65536×16). Higher boots but extrapolates past calibration. First rung of the OOM ladder. |
 | `MAX_NUM_SEQS` | `12` | Concurrent streams. Drop toward `4` → `1` under memory pressure. |
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
-| `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool (~2.45M measured KV tokens). Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
+| `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool (~2.28–2.38M measured KV tokens on the 0.25.1 lane; ~2.45M on the prior 0.21.x lane). Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. Probabilistic `5` was garble-clean but lost KV headroom and throughput; greedy `5` is unsafe. Keep `3`. See `docs/03`. |
+| `MAX_CUDAGRAPH_CAPTURE_SIZE` | `96` | Keeps the spec-decode decode path graphed at concurrency. vLLM 0.25.1's formula is `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — note the `× 2` vs the prior lane's `48`. If `MTP_NUM_TOKENS→5`, raise to `144`. See `docs/08`. |
+| `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no `@support_torch_compile`). **Keep `1`** — `0` forces an unsupported `torch.compile` path that regressed spec-decode acceptance and KV here. See `docs/08`. |
+| `TRITON_CACHE_DIR` | `/cache/huggingface/triton` | Triton kernel cache **must** live on the persistent HF-cache bind — under breakable-cudagraph vLLM's cache-redirect never runs, so an unset value falls to container-ephemeral `/root/.triton/cache` and cold-recompiles on every recreate. See `docs/07`, `docs/08`. |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
 | `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
@@ -134,7 +141,22 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 
 ## Performance
 
-Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` against the live production config (2026-07-08, `GPU_MEMORY_UTILIZATION=0.80`, `DSPARK_REASONING=on`). These are **observations, not guarantees** — yours will vary with silicon, thermals, firmware, and context.
+Measured on **one** 2× GB10 pair. These are **observations, not guarantees** — yours will vary with silicon, thermals, firmware, and context.
+
+### vLLM 0.25.1 lane (current default, `GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`)
+
+Promotion-gate figures from 2026-07-15. A **full** `eval-cluster.sh` sweep (TTFT/latency/prefill/startup breakdowns) has **not** been re-run on this lane yet — the rows below are what was measured during promotion; the rest are marked TBD, not carried over from the prior lane.
+
+| Metric | Result |
+|---|---|
+| **Composite eval score** | **100 / 100** — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 1.00 |
+| Spec-decode acceptance | ~0.637–0.640 (draft len 3) |
+| Throughput — single stream (C1) | at parity with the prior lane's baseline |
+| Throughput — aggregate @ concurrency 8 | ~84.55 tok/s (vs. the prior lane's ~91.72 baseline, ~−7.8%; see [docs/08](docs/08-optimization-and-vllm-025.md)) |
+| KV cache pool | **~2,279,532–2,376,103 tokens** @ util 0.85 (boot-to-boot variance; 93–97% of the prior lane's 2.45M — an open gap, see [docs/08](docs/08-optimization-and-vllm-025.md)) |
+| TTFT (idle / under long prefill), latency percentiles, prefill throughput, startup | **TBD** — pending a fresh full `eval-cluster.sh` sweep on this lane |
+
+### Prior 0.21.x lane (for reference, `GPU_MEMORY_UTILIZATION=0.80`, 2026-07-08)
 
 | Metric | Result |
 |---|---|
@@ -150,7 +172,7 @@ Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` aga
 | KV cache pool | ~2.0M tokens @ util 0.80; **2.45M measured** @ the 0.85 dedicated-pair default |
 | Startup (worker → head, to `/health` 200) | ~5–10 min (warm ~6) |
 
-`eval-cluster.sh` prints all of the above plus the composite in one run; `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes.
+`eval-cluster.sh` prints the composite plus the throughput/latency probes in one run; `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes.
 
 ---
 
@@ -165,7 +187,7 @@ Measured on **one** 2× GB10 pair with the shipped `runtime/eval-cluster.sh` aga
 | [docs/05-troubleshooting.md](docs/05-troubleshooting.md) | OOM ladder, NCCL bandwidth, garbled output, restart deadlocks, and the security/listener audit. |
 | [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
 | [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, Telegram alerts, readiness warm-up, and the eval composite score. |
-| [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The complete A/B decision ledger, vLLM 0.25.0 NOT-READY result, production backports, and recheck triggers. |
+| [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The A/B decision ledger and the **vLLM 0.25.1 promotion** (2026-07-15): the two-candidate distinction, config deltas, hardening pass, residual gaps, and the preserved prior 0.21.x lane + rollback. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---
