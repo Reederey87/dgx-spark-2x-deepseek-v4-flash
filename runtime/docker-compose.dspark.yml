@@ -1,10 +1,22 @@
-# Vendored from tonyd2wild/DeepSeek-v4-Flash-DSpark-1M-NVFP4-KV-2x-DGX-Spark
-# @ ea8264e6b1215d51d5861481414e60e07f4c86da, with local adaptations:
+# Serve profile for the dspark-vllm-gx10 (vLLM 0.25.1) lane. The image is the anemll
+# GB10 port + the PR #47356 fix layer (patches/vllm-pr47356-vgx10/); this repo's own tuned
+# serve argv is adapted for 0.25.1. Local adaptations vs a stock serve command:
 #   - container_name vllm-dsv4 (stable name for preflight/metrics/stop)
 #   - API --host/--port env-driven, defaults 127.0.0.1:8000 (loopback-only)
+#   - vLLM 0.25.1: breakable-cudagraph kept on, Triton cache pinned to the persistent bind,
+#     CUDA-graph capture ceiling on the *2 formula (see docs/08)
+#   - the command preamble's PATH/CUDA_HOME/vllm-binary paths are the anemll gx10 image's
+#     OWN internal layout (/usr/local/cuda, /usr/local/bin/vllm) — NOT the prior 0.21.x
+#     lane's image layout (/opt/env/...). Do not copy the old lane's preamble verbatim if
+#     you're building on a different base image; check that base's actual layout.
+# The prior 0.21.x lane's serve profile is preserved in git history and docs/08.
 services:
   vllm-dspark:
-    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:dspark-nvfp4-stage-c-fi3615}
+    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:vgx10-cand1-pr47356}
+    # REQUIRED for the gx10 base: neutralizes its baked ENTRYPOINT so `command: bash -lc`
+    # below runs directly. Without this, the container double-execs (baked entrypoint wraps
+    # `bash -lc`) and crash-loops on startup. The prior 0.21.x lane's base did not need this.
+    entrypoint: []
     container_name: vllm-dsv4
     network_mode: host
     ipc: host
@@ -45,8 +57,13 @@ services:
       # capture / first-step compiles at 1M context without a spurious abort.
       VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-300}"
 
-      # FlashInfer sampler is part of the 2026-07-03 DSpark garble fix.
+      # FlashInfer sampler: part of the DSpark garble fix AND hang-safe on this lane —
+      # the base's FlashInfer 0.6.15-dev carries PR #3615 (same fix for both). See docs/08.
       VLLM_USE_FLASHINFER_SAMPLER: "${VLLM_USE_FLASHINFER_SAMPLER:-1}"
+      # vLLM 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no
+      # @support_torch_compile). Keep =1; =0 forces an unsupported torch.compile path that
+      # regressed spec-decode acceptance and KV here. See docs/08.
+      VLLM_USE_BREAKABLE_CUDAGRAPH: "${VLLM_USE_BREAKABLE_CUDAGRAPH:-1}"
 
       VLLM_USE_B12X_MOE: "${VLLM_USE_B12X_MOE:-1}"
       VLLM_USE_B12X_WO_PROJECTION: "${VLLM_USE_B12X_WO_PROJECTION:-1}"
@@ -72,8 +89,12 @@ services:
       FLASHINFER_DISABLE_VERSION_CHECK: "${FLASHINFER_DISABLE_VERSION_CHECK:-1}"
       TILELANG_CLEANUP_TEMP_FILES: "${TILELANG_CLEANUP_TEMP_FILES:-1}"
       TILELANG_CACHE_DIR: "${TILELANG_CACHE_DIR:-/cache/huggingface/tilelang}"
+      # Triton kernel cache MUST be on the persistent bind: under breakable-cudagraph vLLM's
+      # cache-redirect never runs, so an unset value falls through to container-ephemeral
+      # /root/.triton/cache and cold-recompiles on every container recreate. See docs/07, docs/08.
+      TRITON_CACHE_DIR: "${TRITON_CACHE_DIR:-/cache/huggingface/triton}"
       DG_JIT_USE_NVRTC: "${DG_JIT_USE_NVRTC:-0}"
-      DG_JIT_NVCC_COMPILER: "${DG_JIT_NVCC_COMPILER:-/opt/env/bin/nvcc}"
+      DG_JIT_NVCC_COMPILER: "${DG_JIT_NVCC_COMPILER:-/usr/local/cuda/bin/nvcc}"  # gx10 image path; the prior 0.21.x lane's was /opt/env/bin/nvcc
       PYTORCH_CUDA_ALLOC_CONF: "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
       NCCL_NET: "${NCCL_NET:-IB}"
@@ -109,14 +130,14 @@ services:
       - -lc
       - >
         [ -n "$${NCCL_IB_GID_INDEX:-}" ] || unset NCCL_IB_GID_INDEX;
-        export PATH="/opt/env/bin:/opt/env/nvvm/bin:/opt/env/targets/sbsa-linux/nvvm/bin:$${PATH:-}";
-        export CUDA_HOME="$${CUDA_HOME:-/opt/env/targets/sbsa-linux}";
+        export PATH="/usr/local/cuda/bin:$${PATH:-}";
+        export CUDA_HOME="$${CUDA_HOME:-/usr/local/cuda}";
         export CUDA_PATH="$${CUDA_PATH:-$${CUDA_HOME}}";
         export CUDAToolkit_ROOT="$${CUDAToolkit_ROOT:-$${CUDA_HOME}}";
-        export LD_LIBRARY_PATH="/opt/env/lib:/opt/env/targets/sbsa-linux/lib:$${LD_LIBRARY_PATH:-}";
+        export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$${LD_LIBRARY_PATH:-}";
         SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-3},\"draft_sample_method\":\"probabilistic\"}";
         if [ "$${DSPARK_REASONING:-on}" = "on" ]; then CHAT_KWARGS="{\"thinking\":true,\"reasoning_effort\":\"$${DSPARK_REASONING_EFFORT:-high}\"}"; GEN_OVERRIDE="{\"temperature\":1.0,\"top_p\":1.0}"; else CHAT_KWARGS="{\"thinking\":false}"; GEN_OVERRIDE="{\"temperature\":0.0,\"top_p\":1.0}"; fi;
-        exec /opt/env/bin/vllm serve ${DSPARK_MODEL:-deepseek-ai/DeepSeek-V4-Flash-DSpark}
+        exec /usr/local/bin/vllm serve ${DSPARK_MODEL:-deepseek-ai/DeepSeek-V4-Flash-DSpark}
         --served-model-name ${SERVED_MODEL_NAME:-deepseek-v4-flash-dspark}
         --host ${VLLM_HOST:-127.0.0.1}
         --port ${API_PORT:-8000}
@@ -130,7 +151,7 @@ services:
         --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS:-8192}
         --long-prefill-token-threshold ${LONG_PREFILL_TOKEN_THRESHOLD:-0}
         --shutdown-timeout ${SHUTDOWN_TIMEOUT:-30}
-        --max-cudagraph-capture-size ${MAX_CUDAGRAPH_CAPTURE_SIZE:-48}
+        --max-cudagraph-capture-size ${MAX_CUDAGRAPH_CAPTURE_SIZE:-96}
         --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
         --enable-prefix-caching
         --async-scheduling

@@ -17,8 +17,10 @@ for script in "${scripts[@]}"; do
 done
 echo "ok: bash syntax (${#scripts[@]} scripts)"
 
-need 'DSPARK_VLLM_BASE_IMAGE=vllm-dspark-runtime:dspark-nvfp4-stage-c' runtime/cluster.env.example
-need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:dspark-nvfp4-stage-c-fi3615' runtime/cluster.env.example
+need 'DSPARK_VLLM_BASE_IMAGE=ghcr.io/anemll/dspark-vllm-gx10@sha256:d0a0c050252dd0b64a3213c728d1c15db9eb37602593ba37534bc708dd223ae7' runtime/cluster.env.example
+need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:vgx10-cand1-pr47356' runtime/cluster.env.example
+need 'vLLM PR #47356' patches/vllm-pr47356-vgx10/README.md
+need 'kv_cache_memory_bytes' patches/vllm-pr47356-vgx10/cache-hash-exclude-kv-bytes.patch
 need 'GLOO_SOCKET_IFNAME=enp1s0f1np1' runtime/cluster.env.example
 need 'SHUTDOWN_TIMEOUT=30' runtime/cluster.env.example
 need '--shutdown-timeout ${SHUTDOWN_TIMEOUT:-30}' runtime/docker-compose.dspark.yml

@@ -10,21 +10,32 @@ under its own license. This project orchestrates and documents them.
 
 Attributed upstreams:
 
-  - vLLM                         (Apache-2.0)   — the inference engine
+  - vLLM                         (Apache-2.0)   — the inference engine. The current
+                                   default lane pins v0.25.1; the prior lane pinned
+                                   0.21.x. Upstream PR #47356 is vendored as a source
+                                   patch for the 0.25.1 lane (patches/vllm-pr47356-vgx10/).
   - DeepSeek-V4-Flash-DSpark     — model weights, by DeepSeek AI, under the
                                    license stated on its Hugging Face model card
-  - tonyd2wild                   — the 2x-DGX-Spark NVFP4/DSpark serving recipe
-                                   this kit vendors and pins (docker-compose)
+  - anemll                       — the dspark-vllm-gx10 community GB10 port (the
+                                   digest-pinned vLLM 0.25.1 base image this kit
+                                   pulls for the current default lane)
+  - b12x                         — the MXFP4 MoE kernel package used by the GB10
+                                   serving images (VLLM_USE_B12X_MOE)
+  - FlashInfer                   (Apache-2.0)   — the top-k/top-p sampler. The 0.25.1
+                                   base carries FlashInfer 0.6.15-dev, which already
+                                   includes PR #3615 (commit 49f2abf), the SM120/121
+                                   multi-CTA radix top-k reset-race fix; the prior
+                                   0.21.x lane vendors that same PR as a source patch
+                                   (patches/flashinfer-pr3615/).
+  - tonyd2wild                   — the 2x-DGX-Spark NVFP4/DSpark serving recipe the
+                                   prior 0.21.x lane vendors and pins (docker-compose)
   - drowzeys ("Keys")            — the DSpark concurrency patch, nvfp4_ds_mla KV,
                                    and the sm121a sparse-MLA / dual-cache work
   - aidendle94                   — the compiled GB10 (sm_121a) DeepGEMM and
-                                   sparse-MLA kernels shipped inside the image
+                                   sparse-MLA kernels shipped inside the prior lane's image
   - MiaAI-Lab                    — dual-Spark packaging and worker-first launch
   - rafaelcaricio                — DSpark vLLM integration
   - NVIDIA dgx-spark-playbooks   — the official "connect two Sparks" guidance
-  - FlashInfer                   (Apache-2.0)   — PR #3615 / commit 49f2abf,
-                                   vendored as a source patch for the SM120/121
-                                   multi-CTA radix top-k reset-race fix
 
 These components are single-author, fast-moving, community efforts and are
 provided by their authors without warranty. Validate on your own hardware.
