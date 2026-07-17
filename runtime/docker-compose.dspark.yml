@@ -5,6 +5,13 @@
 #   - API --host/--port env-driven, defaults 127.0.0.1:8000 (loopback-only)
 #   - vLLM 0.25.1: breakable-cudagraph kept on, Triton cache pinned to the persistent bind,
 #     CUDA-graph capture ceiling on the *2 formula (see docs/08)
+#   - KV pool pinned via --kv-cache-memory-bytes (when KV_CACHE_MEMORY_BYTES is set) instead of
+#     profiler sizing — eliminates the boot-to-boot pool variance AND grew the pool ~1.22x
+#     (the profiler's available-KV budget was carrying the sparse-MLA workspace + cudagraph
+#     capture). See docs/08 "Post-promotion updates".
+#   - a MemAvailable-margin wait loop in the command preamble blocks `vllm serve` until free
+#     memory clears util-required + MEM_MARGIN_GIB — prevents a thin-memory worker from dying
+#     mid-rendezvous and desyncing its restart generation from the peer (2026-07-15 incident).
 #   - the command preamble's PATH/CUDA_HOME/vllm-binary paths are the anemll gx10 image's
 #     OWN internal layout (/usr/local/cuda, /usr/local/bin/vllm) — NOT the prior 0.21.x
 #     lane's image layout (/opt/env/...). Do not copy the old lane's preamble verbatim if
@@ -61,8 +68,10 @@ services:
       # the base's FlashInfer 0.6.15-dev carries PR #3615 (same fix for both). See docs/08.
       VLLM_USE_FLASHINFER_SAMPLER: "${VLLM_USE_FLASHINFER_SAMPLER:-1}"
       # vLLM 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no
-      # @support_torch_compile). Keep =1; =0 forces an unsupported torch.compile path that
-      # regressed spec-decode acceptance and KV here. See docs/08.
+      # @support_torch_compile); =1 IS the supported route for this model. Keep =1.
+      # (=0 was ablated in-band 2026-07-16: boots and runs at baseline throughput/acceptance/
+      # KV — an earlier out-of-band "collapse" datapoint proved to be a capture artifact.
+      # Neither a lever nor a trap; we keep the documented default. See docs/08.)
       VLLM_USE_BREAKABLE_CUDAGRAPH: "${VLLM_USE_BREAKABLE_CUDAGRAPH:-1}"
 
       VLLM_USE_B12X_MOE: "${VLLM_USE_B12X_MOE:-1}"
@@ -137,6 +146,17 @@ services:
         export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$${LD_LIBRARY_PATH:-}";
         SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-3},\"draft_sample_method\":\"probabilistic\"}";
         if [ "$${DSPARK_REASONING:-on}" = "on" ]; then CHAT_KWARGS="{\"thinking\":true,\"reasoning_effort\":\"$${DSPARK_REASONING_EFFORT:-high}\"}"; GEN_OVERRIDE="{\"temperature\":1.0,\"top_p\":1.0}"; else CHAT_KWARGS="{\"thinking\":false}"; GEN_OVERRIDE="{\"temperature\":0.0,\"top_p\":1.0}"; fi;
+        MEMTOTAL_KB="$$(awk '/^MemTotal:/{print $$2}' /proc/meminfo)";
+        REQUIRED_KB="$$(awk -v t="$$MEMTOTAL_KB" -v u="${GPU_MEMORY_UTILIZATION:-0.80}" 'BEGIN{printf "%d", t*u}')";
+        MARGIN_KB=$$((${MEM_MARGIN_GIB:-3} * 1024 * 1024));
+        NEEDED_KB=$$((REQUIRED_KB + MARGIN_KB));
+        echo "== waiting for MemAvailable >= $$((NEEDED_KB/1024/1024)) GiB (util=${GPU_MEMORY_UTILIZATION:-0.80} + ${MEM_MARGIN_GIB:-3}GiB margin) before launching vllm serve — avoids the request_memory() race (a worker launched into a thin margin can die mid-rendezvous and desync its restart generation from the peer, which is loading a ~200s checkpoint on a fixed generation)";
+        for i in $$(seq 1 ${MEM_WAIT_MAX_ATTEMPTS:-120}); do
+          AVAIL_KB="$$(awk '/^MemAvailable:/{print $$2}' /proc/meminfo)";
+          if [ "$$AVAIL_KB" -ge "$$NEEDED_KB" ]; then echo "== memory margin cleared: $$((AVAIL_KB/1024/1024)) GiB available (attempt $$i/${MEM_WAIT_MAX_ATTEMPTS:-120})"; break; fi;
+          if [ "$$i" -eq "${MEM_WAIT_MAX_ATTEMPTS:-120}" ]; then echo "== WARNING: memory margin never cleared after ${MEM_WAIT_MAX_ATTEMPTS:-120} attempts; proceeding anyway — vLLM's own request_memory() check will likely fail cleanly"; fi;
+          sleep ${MEM_WAIT_POLL_SECONDS:-5};
+        done;
         exec /usr/local/bin/vllm serve ${DSPARK_MODEL:-deepseek-ai/DeepSeek-V4-Flash-DSpark}
         --served-model-name ${SERVED_MODEL_NAME:-deepseek-v4-flash-dspark}
         --host ${VLLM_HOST:-127.0.0.1}
@@ -153,6 +173,7 @@ services:
         --shutdown-timeout ${SHUTDOWN_TIMEOUT:-30}
         --max-cudagraph-capture-size ${MAX_CUDAGRAPH_CAPTURE_SIZE:-96}
         --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
+        ${KV_CACHE_MEMORY_BYTES:+--kv-cache-memory-bytes ${KV_CACHE_MEMORY_BYTES}}
         --enable-prefix-caching
         --async-scheduling
         --enable-chunked-prefill
