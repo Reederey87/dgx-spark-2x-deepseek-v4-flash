@@ -126,10 +126,11 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MAX_MODEL_LEN` | `1048576` | Context ceiling. `1048576` is the model's true YaRN ceiling (65536×16). Higher boots but extrapolates past calibration. First rung of the OOM ladder. |
 | `MAX_NUM_SEQS` | `12` | Concurrent streams. Drop toward `4` → `1` under memory pressure. |
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
-| `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool (~2.28–2.38M measured KV tokens on the 0.25.1 lane; ~2.45M on the prior 0.21.x lane). Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
+| `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool (profiler-sized KV: ~2.28–2.38M tokens on this lane; with the `KV_CACHE_MEMORY_BYTES` pin: **2,948,751**). Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
+| `KV_CACHE_MEMORY_BYTES` | `21316272128` | Pins the KV pool in bytes instead of profiler sizing — **larger** (120.5% of the prior lane's 2,446,083 tokens) and **zero boot-to-boot variance**; the profiler's KV budget was silently carrying the sparse-MLA workspace + cudagraph capture. Set = vLLM skips profiling and ignores `GPU_MEMORY_UTILIZATION` for KV sizing. **No free-memory clamp** — an oversized pin OOMs the boot. Unset = profiler sizing returns. See `docs/08`. |
 | `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. Probabilistic `5` was garble-clean but lost KV headroom and throughput; greedy `5` is unsafe. Keep `3`. See `docs/03`. |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | `96` | Keeps the spec-decode decode path graphed at concurrency. vLLM 0.25.1's formula is `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — note the `× 2` vs the prior lane's `48`. If `MTP_NUM_TOKENS→5`, raise to `144`. See `docs/08`. |
-| `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no `@support_torch_compile`). **Keep `1`** — `0` forces an unsupported `torch.compile` path that regressed spec-decode acceptance and KV here. See `docs/08`. |
+| `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no `@support_torch_compile`) — `1` IS the supported route for this model. **Keep `1`.** A controlled `0` ablation (2026-07-16) ran at baseline throughput/acceptance/KV — neither lever nor trap; an earlier scary datapoint was a capture artifact. See `docs/08`. |
 | `TRITON_CACHE_DIR` | `/cache/huggingface/triton` | Triton kernel cache **must** live on the persistent HF-cache bind — under breakable-cudagraph vLLM's cache-redirect never runs, so an unset value falls to container-ephemeral `/root/.triton/cache` and cold-recompiles on every recreate. See `docs/07`, `docs/08`. |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
 | `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
@@ -145,15 +146,16 @@ Measured on **one** 2× GB10 pair. These are **observations, not guarantees** �
 
 ### vLLM 0.25.1 lane (current default, `GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`)
 
-Promotion-gate figures from 2026-07-15. A **full** `eval-cluster.sh` sweep (TTFT/latency/prefill/startup breakdowns) has **not** been re-run on this lane yet — the rows below are what was measured during promotion; the rest are marked TBD, not carried over from the prior lane.
+Promotion-gate figures from 2026-07-15, plus the **`KV_CACHE_MEMORY_BYTES` promotion of 2026-07-17** (pin now in the default `runtime/cluster.env.example`). A **full** `eval-cluster.sh` sweep (TTFT/latency/prefill/startup breakdowns) has **not** been re-run on this lane yet — the rows below are what was measured during promotion; the rest are marked TBD, not carried over from the prior lane.
 
 | Metric | Result |
 |---|---|
 | **Composite eval score** | **100 / 100** — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 1.00 |
 | Spec-decode acceptance | ~0.637–0.640 (draft len 3) |
 | Throughput — single stream (C1) | at parity with the prior lane's baseline |
-| Throughput — aggregate @ concurrency 8 | ~84.55 tok/s (vs. the prior lane's ~91.72 baseline, ~−7.8%; see [docs/08](docs/08-optimization-and-vllm-025.md)) |
-| KV cache pool | **~2,279,532–2,376,103 tokens** @ util 0.85 (boot-to-boot variance; 93–97% of the prior lane's 2.45M — an open gap, see [docs/08](docs/08-optimization-and-vllm-025.md)) |
+| Throughput — aggregate @ concurrency 8 | ~84.55 tok/s (vs. the prior lane's ~91.72 baseline, ~−7.8% residual; see [docs/08](docs/08-optimization-and-vllm-025.md)) |
+| KV cache pool | **2,948,751 tokens** with the `KV_CACHE_MEMORY_BYTES` pin — **120.5%** of the prior lane's 2,446,083, **zero boot-to-boot variance** (was ~2.28–2.38M, 93–97%, varying per boot — gap closed 2026-07-17, see [docs/08](docs/08-optimization-and-vllm-025.md)) |
+| Max concurrency @ 1M ctx | **2.81×** full-length requests (up from ~1.9× at promotion) |
 | TTFT (idle / under long prefill), latency percentiles, prefill throughput, startup | **TBD** — pending a fresh full `eval-cluster.sh` sweep on this lane |
 
 ### Prior 0.21.x lane (for reference, `GPU_MEMORY_UTILIZATION=0.80`, 2026-07-08)
@@ -188,6 +190,7 @@ Promotion-gate figures from 2026-07-15. A **full** `eval-cluster.sh` sweep (TTFT
 | [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
 | [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, Telegram alerts, readiness warm-up, and the eval composite score. |
 | [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The A/B decision ledger and the **vLLM 0.25.1 promotion** (2026-07-15): the two-candidate distinction, config deltas, hardening pass, residual gaps, and the preserved prior 0.21.x lane + rollback. |
+| [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask, incl. the +1.8% TPOT DeepSeek-V4 perf commit. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---

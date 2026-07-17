@@ -162,21 +162,95 @@ Five items investigated as due diligence before flipping the default:
    reasonably thorough negative result.
 5. **`TRITON_CACHE_DIR` persistence** — fixed; see the config change above.
 
+## Post-promotion updates (2026-07-16/17)
+
+Everything below landed *after* the 2026-07-15 promotion, through the same one-variable-at-a-time
+A/B discipline (mandatory correctness gate before any throughput comparison).
+
+### `KV_CACHE_MEMORY_BYTES` — the KV-pool gap is CLOSED (promoted 2026-07-17)
+
+**Change:** serve with `--kv-cache-memory-bytes 21316272128` (19.85 GiB) instead of letting the
+boot-time profiler size the pool (`runtime/cluster.env.example`; the compose emits the flag only
+when the var is set, so revert = comment out one line).
+
+**Why it works better:** when the flag is set, vLLM still runs `profile_run()` but *skips memory
+profiling* and reserves the fixed byte count, ignoring `gpu_memory_utilization` for KV sizing. The
+profiler path's available-KV budget was silently carrying the sparse-MLA workspace (~2.8 GiB) and
+cudagraph capture (~0.9–1.7 GiB) — so it both under-allocated the pool *and* varied boot-to-boot
+with the noisy free-memory read. **Result: 2,948,751 tokens = 120.5% of the prior lane's
+2,446,083, with byte-identical pools across boots.** This was residual gap (b)'s mechanism —
+confirmed and closed. ⚠️ There is **no safety clamp** against actual free memory: the pin value
+was chosen from clean-boot anchors, and an oversized pin will OOM a thin boot. Gates passed: full
+correctness composite 100/100, throughput in the baseline band, 4 clean boots.
+
+**Caveats carried:** (1) the stock KV-saturation probe can only fill the grown pool to ~0.67
+before its clients time out — the probe needs resizing for the new pool; saturation risk is low by
+construction (pool tensors are pre-allocated at boot). (2) Unrelated, config-independent: after
+*hours* of heavy benchmark abuse the head node can enter swap thrash (16 GiB swap, MemAvailable→0)
+that collapses TTFT/throughput — a plain restart clears it (same config). Not pin-caused;
+candidates: swap-use alerting, `vm.swappiness` review, post-bench restart hygiene.
+
+### `VLLM_USE_BREAKABLE_CUDAGRAPH=0` — reproduced clean; question closed (2026-07-16)
+
+The out-of-band `=0` run that looked like a mid-run throughput/acceptance collapse turned out to
+be a **capture artifact** (the var had no wiring path from env into the container at the time —
+the compose `environment:` block never referenced it, so the override silently never landed).
+After wiring it properly and re-testing in-band: 8/8 correctness, all throughput batches in the
+baseline band, acceptance 0.42–0.44, KV pool inside the normal variance band. **=0 is neither a
+lever nor a trap**; we keep the documented default =1. Mechanism correction: upstream, it is **=1**
+that selects `CompilationMode.NONE` (the supported route for archs without
+`@support_torch_compile`, auto-enabled when unset); =0 selects the inductor route, which this
+fork boots and runs at baseline.
+
+### Proprietary env-var ablation ladder — exhausted, both no-effect (2026-07-17)
+
+The gx10 image ships ~20 undocumented `VLLM_DSPARK_*` / `B12X_*` toggles. After pruning traps
+(`VLLM_DSV4_B12X_COMPRESSED_MLA=1` wedges unified memory — never flip) and likely-inert names, the
+two live candidates were A/B'd one at a time (fresh boots, 3× concurrency-8 throughput reps each):
+
+| Toggle | Result (mean C8 tok/s) | Verdict |
+|---|---|---|
+| `B12X_W4A16_TC_DECODE=1` | 83.52 vs 84.55 baseline (−1.2%, noise) | No effect — reverted |
+| `VLLM_DSPARK_FUSED_MARKOV_ARGMAX=1` | 84.32 vs 84.55 baseline (−0.3%, noise) | No effect — reverted |
+
+Correctness gates were 8/8 composite 100 for both; acceptance stayed in the 0.42–0.44 band. The
+image's OFF-by-default toggle surface is now exhausted — remaining lever space is upstream (see
+[docs/09](09-upstream-backport-candidates.md)) or profiling-driven.
+
+### Verification batch (2026-07-17, all read-only)
+
+- `TRITON_CACHE_DIR=/cache/huggingface/triton` **confirmed live** in the running container's env —
+  the persistence fix above is in effect.
+- No DeepGEMM JIT recompile storm at boot → no `DG_JIT_CACHE_DIR` pin needed on this image.
+- Tool-calling behavior intact on 0.25.1 (the `toolcall` correctness probe passes).
+- `/health/ready` returns **404** on this image (only `/health` liveness exists) — the upstream
+  readiness/drain machinery (#43122/#32420/#34730) is absent, so a watchdog drain-then-restart
+  upgrade stays upstream-track; `SHUTDOWN_TIMEOUT` + SIGTERM remains the drain behavior.
+
+### Upstream post-pin fix triage (2026-07-17)
+
+The gx10 image pins vLLM `0.25.2.dev0+g752a3a504` (the v0.25.1 tag); upstream `main` is ~347
+commits past that branch point. Each perf/correctness fix candidate was verified **absent in the
+live container's installed vLLM** (grep-level evidence), ranked, and written up as a maintainer
+ask — see [docs/09](09-upstream-backport-candidates.md). Headliner: **#48137, +1.8% E2E TPOT for
+DeepSeek-V4**. Also settled: this image runs the **upstream V2-runner DSpark** path
+(`v1/worker/gpu/spec_decode/dspark/`), not the older community overlay.
+
 ## Residual gaps (open, honest)
 
 The promotion does not close everything. These are real and bounded:
 
-- **KV-cache pool capacity.** The new profile measures **93–97%** of the prior lane's 2,446,083-token
-  pool (boot-to-boot variance in that range, not one number) at the identical
-  `GPU_MEMORY_UTILIZATION=0.85`. Root cause **not** fully identified. Ruled out: the V1 model runner
-  as an ablation (it crashes — DeepSeek-V4's spec-decode config hard-requires the V2 runner on this
-  checkpoint); and `VLLM_USE_BREAKABLE_CUDAGRAPH=0` (tested live — made the gap slightly *worse*).
-  Remaining unruled-out candidates are GB10/unified-memory memory-accounting differences between vLLM
-  0.21.x and 0.25.x that weren't isolated in the time available. Genuinely open work.
+- ~~**KV-cache pool capacity.**~~ **CLOSED 2026-07-17** by the `KV_CACHE_MEMORY_BYTES` pin (see
+  "Post-promotion updates" above): pool is now 2,948,751 tokens (120.5% of the prior lane), zero
+  boot-to-boot variance. The profiler path's under-allocation (workspace + cudagraph capture
+  charged against the KV budget, plus a noisy free-memory read) was the mechanism.
 - **Concurrency-8 throughput.** ~84.55 tok/s vs. the prior profile's ~91.72 tok/s baseline (~−7.8%),
   improved from an initial ~82.9 tok/s (~−9.6%) after the capture-size fix, but not fully closed.
   **Single-request (C1) throughput is at parity** with the prior baseline — this is specifically a
-  concurrency-scaling gap, not a general slowdown.
+  concurrency-scaling gap, not a general slowdown. Ruled out since: every OFF-by-default env
+  toggle (both no-effect, above) and `VLLM_USE_BREAKABLE_CUDAGRAPH=0` (baseline). Next: side-by-side
+  profiling of the two images under an identical concurrency-8 load, and the upstream #48137
+  backport (docs/09).
 - **vLLM issue #42948** (external, not this kit's bug). DeepSeek-V4's hybrid-attention-group
   prefix-cache implementation can lose cache keys on request reassignment under speculative decoding,
   so the prefix-cache hit rate can be near-zero in practice even though prefix caching is enabled and
