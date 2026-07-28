@@ -16,6 +16,11 @@
 #     OWN internal layout (/usr/local/cuda, /usr/local/bin/vllm) — NOT the prior 0.21.x
 #     lane's image layout (/opt/env/...). Do not copy the old lane's preamble verbatim if
 #     you're building on a different base image; check that base's actual layout.
+#   - async scheduling OFF via --no-async-scheduling (0.26 lane, 2026-07-28; docs/10 "Open
+#     items"). Two traps: omitting the flag does NOT disable async on 0.26 (tri-state
+#     default resolves to enabled — vllm/config/vllm.py:1059-1107), and `#` comments inside
+#     this folded command scalar comment out everything after them — keep rationale here,
+#     in this YAML comment header, never inside the argv.
 # The prior 0.21.x lane's serve profile is preserved in git history and docs/08.
 services:
   vllm-dspark:
@@ -175,7 +180,7 @@ services:
         --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
         ${KV_CACHE_MEMORY_BYTES:+--kv-cache-memory-bytes ${KV_CACHE_MEMORY_BYTES}}
         --enable-prefix-caching
-        --async-scheduling
+        --no-async-scheduling
         --enable-chunked-prefill
         --speculative-config "$${SPECULATIVE_CONFIG}"
         --tokenizer-mode deepseek_v4

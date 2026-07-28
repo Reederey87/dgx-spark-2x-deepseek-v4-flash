@@ -175,7 +175,7 @@ Promotion-gate figures from **2026-07-28** (the in-house 0.26.0 rebase — see [
 | Spec-decode acceptance (eval workload) | **0.713 / 0.700** (draft len 3) — **+12%** vs the 0.25.1 lane's 0.638; bench workload unchanged (~0.43) |
 | Throughput — aggregate @ concurrency 8 | **87.94 tok/s vs 84.29 (+4.3%, same window)** |
 | Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens** (10%/90% depths); battery acceptance 0.784 |
-| KV cache pool | **2,075,155 tokens** with the unchanged `KV_CACHE_MEMORY_BYTES` pin — 0.26's per-token layout costs +42%, so the same pin buys 0.70× the tokens. Max concurrency @ 1M ctx: **2.0×** (was 2.81×) |
+| KV cache pool | **2,948,751 tokens** with the `KV_CACHE_MEMORY_BYTES` pin, max concurrency @ 1M ctx **2.81×** — same as the 0.25.1 lane. (First 0.26 boot read 2,075,155: upstream #47728 doubles the sliding-window admission reservation under `--async-scheduling`; this repo ships `--no-async-scheduling`, measured throughput-neutral — see [docs/10](docs/10-vllm-026-rebase.md) "Open items") |
 | Base image | official `linux/arm64` `vllm/vllm-openai:v0.26.0` (digest-pinned) + the gx10 overlay + backports #50004/#49486, built in-house by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) |
 | Rollback | `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane) — one config swap, both images kept on both nodes |
 
