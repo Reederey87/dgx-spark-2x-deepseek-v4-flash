@@ -1,5 +1,9 @@
 # Optimization ledger and the vLLM 0.25 promotion
 
+> **2026-07-28: superseded by the vLLM 0.26.0 lane** — see
+> [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md). This page stays as the ledger for
+> the 0.25.1 promotion (the current rollback lane).
+
 This page records the experiments behind the shipped profile. As of **2026-07-15 it documents a
 lane change**: the default serving image moved from the vLLM 0.21.x recipe to a vLLM **0.25.1**
 base. Numbers are directional measurements from one 2× DGX Spark pair; re-run the gates on your own
