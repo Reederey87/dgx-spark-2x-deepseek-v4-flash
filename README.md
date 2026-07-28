@@ -7,13 +7,33 @@ Sparks act as one inference engine; the OpenAI-compatible API is served on the h
 loopback (`127.0.0.1:8000`).
 
 This repo is **orchestration and documentation only**. It vendors no upstream source: the
-serving image is *built from* a pinned community base and the weights are *pulled from*
+serving image is *built from* a pinned upstream base and the weights are *pulled from*
 Hugging Face at deploy time. As of **2026-07-28 the default lane is vLLM 0.26.0** — the
 official arm64 `vllm/vllm-openai` image plus the gx10 GB10 overlay and two DSv4 backports,
 built in-house as a thin layer ([patches/vllm-026-rebase/](patches/vllm-026-rebase/), story in
 [docs/10](docs/10-vllm-026-rebase.md)). The prior vLLM 0.25.1 lane (digest-pinned
 `anemll/dspark-vllm-gx10` base + PR #47356) and the 0.21.x lane stay documented and
 rollback-able (see [docs/08](docs/08-optimization-and-vllm-025.md)). See [NOTICE](NOTICE) for upstream attribution.
+
+## Reproducibility
+
+Everything a third party needs is **public, no authentication anywhere**:
+
+- **Hardware:** 2× DGX Spark (GB10) + one QSFP cable between them + Docker — the only
+  non-negotiable inputs.
+- **Weights:** [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark)
+  is a public Hugging Face repo — no token required.
+- **Serving image:** the official `vllm/vllm-openai:v0.26.0` (linux/arm64, public on Docker
+  Hub), the overlay patch in this repo, and two public git pins (b12x, FlashInfer). **No
+  prebuilt third-party image is required** — the trust surface is upstream vLLM plus a
+  ~1.5K-line reviewable patch, not a community-built artifact.
+- **Path:** clone → `bringup/00–09` (node prep, fabric verify, NCCL bench, image build +
+  distribute, weights, smoke) → `runtime/cluster.env` from the example → systemd units.
+
+Caveats: every number here is an observation on one 2× pair (yours will vary), and the
+overlay is a delta against vLLM v0.26.0 — future upstream releases need it re-based (the
+mechanism, and the gates that prove a rebase healthy, are in [docs/10](docs/10-vllm-026-rebase.md)
+and the patch-kit README).
 
 > ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
 > single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
