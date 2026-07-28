@@ -51,8 +51,9 @@ pulled locally (see `bringup/05-build-image.sh`).
 
 C8 throughput **87.94 vs 84.29 tok/s (+4.3%)** · eval acceptance **0.713/0.700 vs 0.638
 (+12%)** · composite **100/100 ×2** · bench acceptance flat (0.43) · 3/3 needle retrievals
-@944,471 tokens · battery acceptance 0.784. One known cost: the reported KV pool re-baselined
-2,948,751 → **2,075,155 tokens** at the unchanged 19.85 GiB byte-pin — **not** a physical
-layout change (bytes/blocks byte-identical): 0.26's #47728 doubles the sliding-window
-admission reservation under `--async-scheduling`, inflating the synthetic 1M-request figure.
-Single 1M-context requests are unaffected. Full record in `docs/10-vllm-026-rebase.md`.
+@944,471 tokens · battery acceptance 0.784. The first 0.26 boot read a KV pool of
+2,075,155 tokens at the unchanged 19.85 GiB byte-pin — **not** a layout change (bytes/blocks
+byte-identical): 0.26's #47728 doubles the sliding-window admission reservation under
+`--async-scheduling`. Resolved same-day by serving with `--no-async-scheduling`
+(throughput-neutral, pool back to 2,948,751 / 2.81× — see `docs/10-vllm-026-rebase.md`
+"Open items"). Full record in `docs/10-vllm-026-rebase.md`.

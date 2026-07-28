@@ -12,7 +12,7 @@ are directional measurements from one 2× DGX Spark pair; re-run the gates on yo
 | Base image | `vllm/vllm-openai:v0.26.0` (official **linux/arm64**, digest-pinned `@sha256:ffb2d59b…abf52`) |
 | Overlay | `gx10-overlay-026.patch` — 13 files: the `dspark-vllm-gx10` GB10 overlay (Anemll, see [NOTICE](../NOTICE)) cherry-picked onto v0.26.0 with **zero conflicts**, plus two guards and two backports (below) |
 | Extra pins | FlashInfer `0.6.15-dev` @ `0472b9b3…`, b12x `0.15.3` @ `7dc6fb8f…` (unchanged from the 0.25.1 lane; `FLASHINFER_DISABLE_VERSION_CHECK=1`) |
-| Serving config | **unchanged** from the 0.25.1 lane: 1M ctx, `nvfp4_ds_mla`, DSpark n=3 probabilistic, util 0.85, `KV_CACHE_MEMORY_BYTES=21316272128` |
+| Serving config | **unchanged** from the 0.25.1 lane except one flag: 1M ctx, `nvfp4_ds_mla`, DSpark n=3 probabilistic, util 0.85, `KV_CACHE_MEMORY_BYTES=21316272128`, **`--no-async-scheduling`** (see "Open items" — restores the reported KV pool at zero measured cost) |
 
 No CUDA rebuild: the official arm64 image supplies every 0.26 dependency (its
 `TORCH_CUDA_ARCH_LIST` includes 12.0 — family-compatible with GB10 sm_121a), so the lane is a
@@ -60,7 +60,7 @@ code asserts fp8-family KV for target *and* drafter (`_resolve_dsv4_kv_cache_dty
 | Spec-decode acceptance (eval workload) | 0.638 | **0.713 / 0.700** |
 | Spec-decode acceptance (bench workload) | ~0.42–0.43 | ~0.42–0.44 (flat) |
 | Deep-context retrieval | (E17: clean) | **3/3 needle HITs @ 944,471 tokens**, 6/6 finish=stop, battery acceptance 0.784 |
-| KV cache pool | 2,948,751 tokens | **2,075,155 tokens** (same 19.85 GiB pin; reported-figure shrink — see "Open items", not a layout change) |
+| KV cache pool | 2,948,751 tokens | **2,948,751 tokens** (same 19.85 GiB pin; restored — the 2,075,155 first read was #47728's admission reservation under async scheduling, not a layout change; see "Open items") |
 | Output distribution (T2 bit-control) | (control) | sequence-equal 827/827; logprob shift expected from the engine change, benign by evidence (correctness 1.00, acceptance up) |
 
 ## Rollback
@@ -73,21 +73,25 @@ restart the pair. The 0.25.1 lane's build kit (`patches/vllm-pr47356-vgx10/`) an
 
 ## Open items
 
-- **KV pool reported-shrink (#47728).** The 2,948,751 → 2,075,155-token move at the unchanged
-  byte-pin is **not a physical layout change** — both lanes allocate the identical seven
-  caches (20,000 blocks × 1,065,792 B; the 584B nvfp4 envelope and the #47493 alignment
-  values exist identically in the 0.25.1 lane). The delta is upstream **#47728**: the
-  sliding-window recycling specs (SWA KV + C4/C128 compressor states) reserve
-  `window−1 + max_in_flight_tokens` per request, and `max_in_flight_tokens` =
-  `max_concurrent_batches × max_num_batched_tokens` = 2 × 8,192 under `--async-scheduling`
-  (0.25.1 reserved ~8,192). The doubled reservation is the entire +42% *reported* per-token
-  charge; physical steady-state cost is unchanged (~3,870 B/tok) and real traffic shows no
-  admission distress. Max concurrency @1M: 2.81× → 2.0× (synthetic 1M-request figure).
-  Levers if it ever binds: dropping `--async-scheduling` restores the ~2.95M reported figure
-  at the cost of async scheduling's throughput (measure before promoting; change both nodes
-  or neither); the byte-pin only scales the synthetic figure and needs free physical
-  headroom this fleet doesn't have. Reverting #47728 is **not** recommended — it is a
-  correctness fix (out-of-window block freeing under async scheduling).
+- **KV pool reported-shrink (#47728) — RESOLVED 2026-07-28 (async-off, zero cost).** The
+  2,948,751 → 2,075,155-token move at the unchanged byte-pin was **not a physical layout
+  change** — both lanes allocate the identical seven caches (20,000 blocks × 1,065,792 B;
+  the 584B nvfp4 envelope and the #47493 alignment values exist identically in the 0.25.1
+  lane). The delta was upstream **#47728**: the sliding-window recycling specs (SWA KV +
+  C4/C128 compressor states) reserve `window−1 + max_in_flight_tokens` per request, and
+  `max_in_flight_tokens` = `max_concurrent_batches × max_num_batched_tokens` = 2 × 8,192
+  under `--async-scheduling` (0.25.1 reserved ~8,192). The doubled reservation was the
+  entire +42% *reported* per-token charge; physical steady-state cost never changed.
+  **Fix shipped in this repo's compose: `--no-async-scheduling`.** Same-window A/B:
+  reported pool back to **2,948,751 / 2.81×** with C8 86.12 vs 86.92 tok/s (95% CI of the
+  paired delta [−4.39, +2.78] — within noise), bench/eval acceptance flat, eval 100/100 ×2.
+  Two traps recorded for anyone touching the flag: (1) **omitting** `--async-scheduling`
+  does NOT disable it on 0.26 — the tri-state default resolves to enabled
+  (`vllm/config/vllm.py:1059-1107`); the only off spelling is `--no-async-scheduling`.
+  (2) `#` comments inside the compose command scalar comment out every arg after them
+  (folded shell string) — keep notes out of the argv. Reverting #47728 itself is **not**
+  recommended — it is a correctness fix (out-of-window block freeing under async
+  scheduling).
 - **Upstream watch.** #50012 (the block-size guard) and #49927 (the numerics findings) are
   open; if upstream lands a warn-only guard or the acceptance fixes, the corresponding
   overlay pieces get dropped on the next rebase. The drafter-attention fix #48167 is already
