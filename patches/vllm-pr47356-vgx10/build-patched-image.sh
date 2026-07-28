@@ -17,7 +17,7 @@
 # already pulled locally at the pinned digest.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-BASE="${BASE_IMAGE:-ghcr.io/anemll/dspark-vllm-gx10@sha256:d0a0c050252dd0b64a3213c728d1c15db9eb37602593ba37534bc708dd223ae7}"
+BASE="${BASE_IMAGE:-ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8}"
 TAG="${PATCHED_TAG:-vllm-dspark-runtime:vgx10-cand1-pr47356}"
 CACHE_PY_IN_IMG=/usr/local/lib/python3.12/dist-packages/vllm/config/cache.py
 

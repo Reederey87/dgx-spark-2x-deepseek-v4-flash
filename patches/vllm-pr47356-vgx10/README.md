@@ -8,8 +8,8 @@ on a pinned base image, built and verified by `bringup/05-build-image.sh`.
 ## What & why
 
 The base image is
-`ghcr.io/anemll/dspark-vllm-gx10@sha256:d0a0c050252dd0b64a3213c728d1c15db9eb37602593ba37534bc708dd223ae7`
-(a community GB10 port by GitHub user `anemll`), pinning vLLM `v0.25.1`
+`ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8`
+(the `0.1.1` release — a community GB10 port by GitHub user `anemll`), pinning vLLM `v0.25.1`
 (`752a3a504485790a2e8491cacbb35c137339ad34`). Its vLLM pin is dated 2026-07-12 but predates
 upstream **vLLM [PR #47356](https://github.com/vllm-project/vllm/pull/47356)**, which merged
 2026-07-07 — the base is newer overall yet just missed this one fix.
@@ -73,12 +73,14 @@ verified insufficient alone:
 container's `/etc`, `/proc`, `/sys` mountpoint dirs with build-wall-clock time regardless of
 `SOURCE_DATE_EPOCH`.
 
-## Result (verified 2026-07-15)
+## Result (verified 2026-07-15; base moved to 0.1.1 on 2026-07-28)
 
-- **Base:** `ghcr.io/anemll/dspark-vllm-gx10@sha256:d0a0c050…223ae7`
+- **Base:** `ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8`
+  (the `0.1.1` release — fixes a long-prefill crash in the B12X route-pack JIT; same vLLM
+  `v0.25.1` pin as 0.1.0, so this patch applies unchanged)
 - **Patched serving tag:** `vllm-dspark-runtime:vgx10-cand1-pr47356`
 - **Image ID (both nodes, byte-identical):**
-  `sha256:99b05acd7e23c447e549122ed8a932d6ca959aa8671c32b6ee7f85f821222a22`
+  `sha256:7b5b962a88c2944961153b4be08c922155ed7792f77fc3b3e0c34151f8df5ec0`
 - **Smoke test (both nodes):** `OK: hash unaffected by kv_cache_memory_bytes`
   (`CacheConfig().compute_hash() == CacheConfig(kv_cache_memory_bytes=1<<30).compute_hash()`)
 
