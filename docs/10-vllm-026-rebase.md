@@ -1,0 +1,83 @@
+# The vLLM 0.26.0 rebase and promotion (2026-07-28)
+
+This page documents the current default lane: **vLLM 0.26.0**, promoted 2026-07-28, replacing
+the 0.25.1 lane ([docs/08](docs/08-optimization-and-vllm-025.md), now the rollback). Numbers
+are directional measurements from one 2× DGX Spark pair; re-run the gates on your own hardware.
+
+## Lane definition
+
+| Component | Pin |
+|---|---|
+| Serving image | `vllm-dspark-runtime:v026-gx10-cand4-backports` (built by [patches/vllm-026-rebase/](../patches/vllm-026-rebase/)) |
+| Base image | `vllm/vllm-openai:v0.26.0` (official **linux/arm64**, digest-pinned `@sha256:ffb2d59b…abf52`) |
+| Overlay | `gx10-overlay-026.patch` — 13 files: the `dspark-vllm-gx10` GB10 overlay (Anemll, see [NOTICE](../NOTICE)) cherry-picked onto v0.26.0 with **zero conflicts**, plus two guards and two backports (below) |
+| Extra pins | FlashInfer `0.6.15-dev` @ `0472b9b3…`, b12x `0.15.3` @ `7dc6fb8f…` (unchanged from the 0.25.1 lane; `FLASHINFER_DISABLE_VERSION_CHECK=1`) |
+| Serving config | **unchanged** from the 0.25.1 lane: 1M ctx, `nvfp4_ds_mla`, DSpark n=3 probabilistic, util 0.85, `KV_CACHE_MEMORY_BYTES=21316272128` |
+
+No CUDA rebuild: the official arm64 image supplies every 0.26 dependency (its
+`TORCH_CUDA_ARCH_LIST` includes 12.0 — family-compatible with GB10 sm_121a), so the lane is a
+thin Python layer (see the patch-kit README for the extract-then-patch build).
+
+## The two guards the lane needs (both shipped in the overlay)
+
+1. **Warn-only `dspark_block_size`.** v0.26.0 hard-rejects `num_speculative_tokens=3 <
+   dspark_block_size: 5` claiming garbled output. On this stack n=3 is measured garble-clean
+   (needle HITs to 944,471 tokens, reasoning on and off) and complying (n=5) costs −12%
+   throughput, so the overlay logs a warning and proceeds. Upstream: vllm-project/vllm#50012.
+2. **Zero-token-prefill-chunk skip.** 0.26's capture/warmup batches (padded to
+   `max_num_seqs`) emit zero-token prefill spans that crash flashinfer's sparse-MLA segment
+   normalize (`cannot reshape tensor of 0 elements into shape [0, -1]`) — an undocumented
+   boot crash any DSpark/0.26 deployment with this batch shape hits. The overlay skips empty
+   chunks (same precedent as upstream's #48957 empty-launch skip).
+
+Dependency note: inherit the base image's `apache-tvm-ffi` (0.1.10) — pinning 0.1.9 breaks
+cutlass-dsl 4.6.0's `tvm_ffi_provider` at first dummy run.
+
+## The acceptance-regression hunt (why the backports are in)
+
+Stock 0.26.0 measured **−7% eval-workload spec-decode acceptance** vs the 0.25.1 lane
+(0.638 → 0.592), concentrated at draft positions 2–3; bench-workload acceptance stayed flat
+(~0.43). Reverting the release's own perf kernels (#48137, #48660 — measured as acceptance
+costs on 0.25.1) made it **monotonically worse** (0.561 / 0.548): on the 0.26 base those
+kernels *help* drafter-target agreement — the 0.25.1 finding inverts. The residual was closed
+by backporting two post-0.26.0 upstream DSv4 perf commits:
+
+- **#49486** — skip topk/router when not needed (also +3.4% claimed decode TTFT);
+- **#50004** — adaptive topk width (+1.0% claimed E2E throughput).
+
+With them, acceptance **beats** the 0.25.1 lane (0.713/0.700) and throughput is up +4.3%.
+Attribution between the two was not isolated (both apply cleanly; a #49486-only arm is cheap
+to rebuild if ever needed). Related dead end recorded for completeness: running the drafter
+on BF16 KV (upstream #48787's escape hatch) is **structurally unavailable** — the DSv4 model
+code asserts fp8-family KV for target *and* drafter (`_resolve_dsv4_kv_cache_dtype`).
+
+## Evidence (same-day A/B vs the 0.25.1 lane)
+
+| Metric | 0.25.1 lane | **0.26.0 lane (cand4)** |
+|---|---|---|
+| Composite eval | 100/100 | **100/100 ×2** |
+| Throughput — aggregate @ concurrency 8 | 84.29 tok/s (same window) | **87.94 tok/s (+4.3%)** |
+| Spec-decode acceptance (eval workload) | 0.638 | **0.713 / 0.700** |
+| Spec-decode acceptance (bench workload) | ~0.42–0.43 | ~0.42–0.44 (flat) |
+| Deep-context retrieval | (E17: clean) | **3/3 needle HITs @ 944,471 tokens**, 6/6 finish=stop, battery acceptance 0.784 |
+| KV cache pool | 2,948,751 tokens | **2,075,155 tokens** (same 19.85 GiB pin; 0.26 per-token layout +42%) |
+| Output distribution (T2 bit-control) | (control) | sequence-equal 827/827; logprob shift expected from the engine change, benign by evidence (correctness 1.00, acceptance up) |
+
+## Rollback
+
+One config swap in `runtime/cluster.env` (see the rollback block in
+`runtime/cluster.env.example`): point `DSPARK_VLLM_IMAGE` back at
+`vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane image, kept on both nodes) and
+restart the pair. The 0.25.1 lane's build kit (`patches/vllm-pr47356-vgx10/`) and ledger
+([docs/08](docs/08-optimization-and-vllm-025.md)) are preserved.
+
+## Open items
+
+- **KV pool re-baseline.** 0.26's per-token layout costs +42%, so the unchanged byte-pin
+  buys 0.70× the tokens (max concurrency @1M: 2.81× → 2.0×). Single 1M-context requests are
+  unaffected; if concurrent-long-context headroom ever binds, the lever is the byte-pin
+  within the profiled headroom (change both nodes or neither).
+- **Upstream watch.** #50012 (the block-size guard) and #49927 (the numerics findings) are
+  open; if upstream lands a warn-only guard or the acceptance fixes, the corresponding
+  overlay pieces get dropped on the next rebase. The drafter-attention fix #48167 is already
+  in 0.26.0; `thinking_token_budget` remains unsupported on the V2 runner (same as 0.25.1).

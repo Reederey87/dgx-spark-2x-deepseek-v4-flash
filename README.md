@@ -8,11 +8,12 @@ loopback (`127.0.0.1:8000`).
 
 This repo is **orchestration and documentation only**. It vendors no upstream source: the
 serving image is *built from* a pinned community base and the weights are *pulled from*
-Hugging Face at deploy time. As of **2026-07-15 the default lane is vLLM 0.25.1** — a
-digest-pinned `anemll/dspark-vllm-gx10` GB10 base plus one thin upstream-fix layer (vLLM
-PR #47356). The prior vLLM 0.21.x lane stays documented and rollback-able. The full lane-change
-rationale, config deltas, hardening pass, and open gaps are in
-[docs/08](docs/08-optimization-and-vllm-025.md). See [NOTICE](NOTICE) for upstream attribution.
+Hugging Face at deploy time. As of **2026-07-28 the default lane is vLLM 0.26.0** — the
+official arm64 `vllm/vllm-openai` image plus the gx10 GB10 overlay and two DSv4 backports,
+built in-house as a thin layer ([patches/vllm-026-rebase/](patches/vllm-026-rebase/), story in
+[docs/10](docs/10-vllm-026-rebase.md)). The prior vLLM 0.25.1 lane (digest-pinned
+`anemll/dspark-vllm-gx10` base + PR #47356) and the 0.21.x lane stay documented and
+rollback-able (see [docs/08](docs/08-optimization-and-vllm-025.md)). See [NOTICE](NOTICE) for upstream attribution.
 
 > ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
 > single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
@@ -144,19 +145,19 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 
 Measured on **one** 2× GB10 pair. These are **observations, not guarantees** — yours will vary with silicon, thermals, firmware, and context.
 
-### vLLM 0.25.1 lane (current default, `GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`)
+### vLLM 0.26.0 lane (current default, `GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`)
 
-Promotion-gate figures from 2026-07-15, plus the **`KV_CACHE_MEMORY_BYTES` promotion of 2026-07-17** (pin now in the default `runtime/cluster.env.example`). A **full** `eval-cluster.sh` sweep (TTFT/latency/prefill/startup breakdowns) has **not** been re-run on this lane yet — the rows below are what was measured during promotion; the rest are marked TBD, not carried over from the prior lane.
+Promotion-gate figures from **2026-07-28** (the in-house 0.26.0 rebase — see [docs/10](docs/10-vllm-026-rebase.md)), all same-day A/B against the prior 0.25.1 lane whose figures are preserved in [docs/08](docs/08-optimization-and-vllm-025.md).
 
 | Metric | Result |
 |---|---|
-| **Composite eval score** | **100 / 100** — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 1.00 |
-| Spec-decode acceptance | ~0.637–0.640 (draft len 3) |
-| Throughput — single stream (C1) | at parity with the prior lane's baseline |
-| Throughput — aggregate @ concurrency 8 | ~84.55 tok/s (vs. the prior lane's ~91.72 baseline, ~−7.8% residual; see [docs/08](docs/08-optimization-and-vllm-025.md)) |
-| KV cache pool | **2,948,751 tokens** with the `KV_CACHE_MEMORY_BYTES` pin — **120.5%** of the prior lane's 2,446,083, **zero boot-to-boot variance** (was ~2.28–2.38M, 93–97%, varying per boot — gap closed 2026-07-17, see [docs/08](docs/08-optimization-and-vllm-025.md)) |
-| Max concurrency @ 1M ctx | **2.81×** full-length requests (up from ~1.9× at promotion) |
-| TTFT (idle / under long prefill), latency percentiles, prefill throughput, startup | **TBD** — pending a fresh full `eval-cluster.sh` sweep on this lane |
+| **Composite eval score** | **100 / 100** (×2) — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 1.00 |
+| Spec-decode acceptance (eval workload) | **0.713 / 0.700** (draft len 3) — **+12%** vs the 0.25.1 lane's 0.638; bench workload unchanged (~0.43) |
+| Throughput — aggregate @ concurrency 8 | **87.94 tok/s vs 84.29 (+4.3%, same window)** |
+| Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens** (10%/90% depths); battery acceptance 0.784 |
+| KV cache pool | **2,075,155 tokens** with the unchanged `KV_CACHE_MEMORY_BYTES` pin — 0.26's per-token layout costs +42%, so the same pin buys 0.70× the tokens. Max concurrency @ 1M ctx: **2.0×** (was 2.81×) |
+| Base image | official `linux/arm64` `vllm/vllm-openai:v0.26.0` (digest-pinned) + the gx10 overlay + backports #50004/#49486, built in-house by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) |
+| Rollback | `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane) — one config swap, both images kept on both nodes |
 
 ### Prior 0.21.x lane (for reference, `GPU_MEMORY_UTILIZATION=0.80`, 2026-07-08)
 
@@ -191,6 +192,7 @@ Promotion-gate figures from 2026-07-15, plus the **`KV_CACHE_MEMORY_BYTES` promo
 | [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, Telegram alerts, readiness warm-up, and the eval composite score. |
 | [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The A/B decision ledger and the **vLLM 0.25.1 promotion** (2026-07-15): the two-candidate distinction, config deltas, hardening pass, residual gaps, and the preserved prior 0.21.x lane + rollback. |
 | [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask, incl. the +1.8% TPOT DeepSeek-V4 perf commit. |
+| [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md) | The **vLLM 0.26.0 promotion** (2026-07-28): the in-house rebase (official image + gx10 overlay + backports), the two guards it needs, the acceptance-regression hunt, evidence, and rollback. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---

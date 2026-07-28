@@ -11,14 +11,16 @@ under its own license. This project orchestrates and documents them.
 Attributed upstreams:
 
   - vLLM                         (Apache-2.0)   — the inference engine. The current
-                                   default lane pins v0.25.1; the prior lane pinned
-                                   0.21.x. Upstream PR #47356 is vendored as a source
-                                   patch for the 0.25.1 lane (patches/vllm-pr47356-vgx10/).
+                                   default lane pins the official v0.26.0 image and
+                                   applies the overlay/backports as a source patch
+                                   (patches/vllm-026-rebase/); the prior lane pinned
+                                   0.25.1, with upstream PR #47356 vendored as a source
+                                   patch (patches/vllm-pr47356-vgx10/).
   - DeepSeek-V4-Flash-DSpark     — model weights, by DeepSeek AI, under the
                                    license stated on its Hugging Face model card
-  - anemll                       — the dspark-vllm-gx10 community GB10 port (the
-                                   digest-pinned vLLM 0.25.1 base image this kit
-                                   pulls for the current default lane)
+  - anemll                       — the dspark-vllm-gx10 community GB10 port: the gx10
+                                   overlay at the heart of the 0.26.0 lane, and the
+                                   digest-pinned vLLM 0.25.1 base image of the prior lane
   - b12x                         — the MXFP4 MoE kernel package used by the GB10
                                    serving images (VLLM_USE_B12X_MOE)
   - FlashInfer                   (Apache-2.0)   — the top-k/top-p sampler. The 0.25.1

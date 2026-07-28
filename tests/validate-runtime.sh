@@ -17,8 +17,10 @@ for script in "${scripts[@]}"; do
 done
 echo "ok: bash syntax (${#scripts[@]} scripts)"
 
-need 'DSPARK_VLLM_BASE_IMAGE=ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8' runtime/cluster.env.example
-need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:vgx10-cand1-pr47356' runtime/cluster.env.example
+need 'DSPARK_VLLM_BASE_IMAGE=vllm/vllm-openai:v0.26.0@sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52' runtime/cluster.env.example
+need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v026-gx10-cand4-backports' runtime/cluster.env.example
+need 'gx10-overlay-026.patch' patches/vllm-026-rebase/README.md
+need 'zero-token-prefill-chunk guard' patches/vllm-026-rebase/README.md
 need 'vLLM PR #47356' patches/vllm-pr47356-vgx10/README.md
 need 'kv_cache_memory_bytes' patches/vllm-pr47356-vgx10/cache-hash-exclude-kv-bytes.patch
 need 'GLOO_SOCKET_IFNAME=enp1s0f1np1' runtime/cluster.env.example
