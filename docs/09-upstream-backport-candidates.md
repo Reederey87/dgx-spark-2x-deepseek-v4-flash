@@ -45,7 +45,7 @@ exact in-container evidence of absence.
 
 ## Draft maintainer message (copy-paste)
 
-> Hi anemll — running your `dspark-vllm-gx10` 0.1.0 image (vLLM 0.25.1 @ 752a3a50) in production
+> Hi anemll — running your `dspark-vllm-gx10` 0.1.1 image (vLLM 0.25.1 @ 752a3a50) in production
 > on 2× DGX Spark with DeepSeek-V4-Flash-DSpark (nvfp4_ds_mla, DSpark MTP=3, 1M ctx). Great work
 > on the port. While A/B-testing we verified the following post-0.25.1 upstream fixes are absent
 > from the image (grepped the installed package in the live container). Any chance the next build

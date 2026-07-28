@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/anemll/dspark-vllm-gx10@sha256:d0a0c050252dd0b64a3213c728d1c15db9eb37602593ba37534bc708dd223ae7
+ARG BASE_IMAGE=ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8
 FROM ${BASE_IMAGE}
 
 # vLLM PR #47356 (upstream, merged 2026-07-07): exclude kv_cache_memory_bytes from

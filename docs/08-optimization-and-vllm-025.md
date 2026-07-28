@@ -29,11 +29,18 @@ upstream-fix layer (vLLM PR #47356). Pins:
 
 | Component | Pin |
 |---|---|
-| Base image | `ghcr.io/anemll/dspark-vllm-gx10@sha256:d0a0c050252dd0b64a3213c728d1c15db9eb37602593ba37534bc708dd223ae7` (tag `0.1.0`) |
+| Base image | `ghcr.io/anemll/dspark-vllm-gx10@sha256:a83948492cf13df455170fb42885f5ef4db54fefe0feff0f841ecbff464ac9d8` (tag `0.1.1`) |
 | vLLM | `v0.25.1` @ `752a3a504485790a2e8491cacbb35c137339ad34` (self-reports `0.25.2.dev0+g752a3a504.d20260714`) |
 | FlashInfer | `0.6.15-dev` @ `0472b9b3f2fba11b463f8526f390297d52a8aad7` (unreleased dev commit; `FLASHINFER_DISABLE_VERSION_CHECK=1` suppresses the version-check mismatch) |
 | b12x (MXFP4 MoE) | `0.15.3` @ `7dc6fb8fcc6446ea093537d1657df81985fa5f43` |
-| Patched serving tag | `vllm-dspark-runtime:vgx10-cand1-pr47356`, image ID `sha256:99b05acd7e23c447e549122ed8a932d6ca959aa8671c32b6ee7f85f821222a22` (byte-identical across both nodes) |
+| Patched serving tag | `vllm-dspark-runtime:vgx10-cand1-pr47356`, image ID `sha256:7b5b962a88c2944961153b4be08c922155ed7792f77fc3b3e0c34151f8df5ec0` (byte-identical across both nodes) |
+
+> **Base bump 2026-07-28 (0.1.0 → 0.1.1).** Anemll's `0.1.1` release fixes a long-prefill crash
+> in the B12X route-pack JIT and prewarms the route-pack specializations; `upstream.lock` is
+> unchanged (same vLLM `v0.25.1` pin), so the #47356 layer rebuilds byte-cleanly on it
+> (resulting image ID above). Measured before adopting: same-window A/B vs the 0.1.0 base —
+> throughput within noise (95% CI of the delta [−2.82, +0.40] tok/s), acceptance unchanged,
+> composite 100/100. The 0.1.0 base (`@sha256:d0a0c050…`) remains the documented rollback.
 
 The serve knobs that are *unchanged* from the prior lane still hold: context 1,048,576 (calibrated
 YaRN ceiling), MTP draft length 3 (probabilistic), max sequences 12, batch-token cap 8,192,
