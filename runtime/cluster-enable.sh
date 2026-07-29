@@ -17,7 +17,7 @@ if [ -n "${CONFLICTING_SERVICE:-}" ]; then
 fi
 
 echo "== enabling cluster units for boot"
-ssh "$CLUSTER_USER@$HEAD_HOST"   'systemctl --user enable vllm-dsv4-head.service && systemctl --user enable --now vllm-dsv4-watchdog.timer'
+ssh "$CLUSTER_USER@$HEAD_HOST"   'systemctl --user enable vllm-dsv4-head.service && systemctl --user enable --now vllm-dsv4-watchdog.timer && systemctl --user enable --now vllm-metrics-watch.timer'
 ssh "$CLUSTER_USER@$WORKER_HOST" 'systemctl --user enable vllm-dsv4-worker.service'
 
 bash "$KIT/start-cluster.sh"

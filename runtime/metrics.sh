@@ -13,4 +13,4 @@ for host in "$HEAD_HOST" "$WORKER_HOST"; do
 done
 
 echo "== $HEAD_HOST vLLM metrics"
-ssh "$CLUSTER_USER@$HEAD_HOST" "curl -s http://127.0.0.1:$API_PORT/metrics | grep -E 'vllm:(num_requests_running|num_requests_waiting|gpu_cache_usage_perc)' | head -10" || true
+ssh "$CLUSTER_USER@$HEAD_HOST" "curl -s http://127.0.0.1:$API_PORT/metrics | grep -E 'vllm:(num_requests_running|num_requests_waiting|kv_cache_usage_perc|gpu_cache_usage_perc)' | head -10" || true

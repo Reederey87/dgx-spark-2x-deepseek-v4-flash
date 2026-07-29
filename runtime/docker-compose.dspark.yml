@@ -1,6 +1,6 @@
-# Serve profile for the dspark-vllm-gx10 (vLLM 0.25.1) lane. The image is the anemll
-# GB10 port + the PR #47356 fix layer (patches/vllm-pr47356-vgx10/); this repo's own tuned
-# serve argv is adapted for 0.25.1. Local adaptations vs a stock serve command:
+# Serve profile for the vLLM 0.26.0 lane (image: vllm-dspark-runtime:v026-gx10-cand4-backports,
+# official arm64 vllm/vllm-openai:v0.26.0 + the gx10 overlay, built by patches/vllm-026-rebase/).
+# This repo's own tuned serve argv is adapted for 0.26.0. Local adaptations vs a stock serve command:
 #   - container_name vllm-dsv4 (stable name for preflight/metrics/stop)
 #   - API --host/--port env-driven, defaults 127.0.0.1:8000 (loopback-only)
 #   - vLLM 0.25.1: breakable-cudagraph kept on, Triton cache pinned to the persistent bind,
@@ -24,7 +24,7 @@
 # The prior 0.21.x lane's serve profile is preserved in git history and docs/08.
 services:
   vllm-dspark:
-    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:vgx10-cand1-pr47356}
+    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:v026-gx10-cand4-backports}
     # REQUIRED for the gx10 base: neutralizes its baked ENTRYPOINT so `command: bash -lc`
     # below runs directly. Without this, the container double-execs (baked entrypoint wraps
     # `bash -lc`) and crash-loops on startup. The prior 0.21.x lane's base did not need this.
@@ -61,10 +61,13 @@ services:
       # derived ceiling (== 65536*16 for this model). Set 1 only to deliberately
       # extrapolate past calibration (unsupported); 0 removes that latent footgun.
       VLLM_ALLOW_LONG_MAX_MODEL_LEN: "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-0}"
-      VLLM_TRITON_MLA_SPARSE: "${VLLM_TRITON_MLA_SPARSE:-1}"
+      # DEAD ON THIS IMAGE (0.26.0 cand4, verified inert — unknown-env-var boot-log sweep
+      # 2026-07-25): VLLM_TRITON_MLA_SPARSE, VLLM_SKIP_INIT_MEMORY_CHECK,
+      # VLLM_USE_B12X_WO_PROJECTION, and the whole VLLM_DSPARK_*/VLLM_DSV4_* ablation family
+      # (gx10-fork experiments, proven no-ops here). Kept out of the environment so the boot
+      # log's unknown-var count stays meaningful; resurrect only for a targeted ablation.
       VLLM_SPARSE_INDEXER_MAX_LOGITS_MB: "${VLLM_SPARSE_INDEXER_MAX_LOGITS_MB:-256}"
       VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-0}"
-      VLLM_SKIP_INIT_MEMORY_CHECK: "${VLLM_SKIP_INIT_MEMORY_CHECK:-1}"
       # Per-step model-execute timeout; a larger value tolerates long cudagraph
       # capture / first-step compiles at 1M context without a spurious abort.
       VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-300}"
@@ -79,24 +82,13 @@ services:
       # Neither a lever nor a trap; we keep the documented default. See docs/08.)
       VLLM_USE_BREAKABLE_CUDAGRAPH: "${VLLM_USE_BREAKABLE_CUDAGRAPH:-1}"
 
+      # Set-but-inert on 0.26 (defined, never consumed — the MXFP4 oracle auto-selects
+      # DEEPGEMM_MXFP4; see docs/11). Kept for the 0.25.1 rollback lane, where it was live.
       VLLM_USE_B12X_MOE: "${VLLM_USE_B12X_MOE:-1}"
-      VLLM_USE_B12X_WO_PROJECTION: "${VLLM_USE_B12X_WO_PROJECTION:-1}"
       VLLM_B12X_W4A16_FORCE_BLOCKS_PER_SM: "${VLLM_B12X_W4A16_FORCE_BLOCKS_PER_SM:-0}"
       VLLM_B12X_W4A16_FORCE_BLOCKS_MAX_M: "${VLLM_B12X_W4A16_FORCE_BLOCKS_MAX_M:-16}"
       VLLM_B12X_W4A16_FORCE_TILE_CONFIG: "${VLLM_B12X_W4A16_FORCE_TILE_CONFIG:-}"
       B12X_W4A16_TC_DECODE: "${B12X_W4A16_TC_DECODE:-0}"
-
-      VLLM_DSPARK_CONFIDENCE_THRESHOLD: "${VLLM_DSPARK_CONFIDENCE_THRESHOLD:-0.0}"
-      VLLM_DSPARK_CONFIDENCE_SCHEDULER: "${VLLM_DSPARK_CONFIDENCE_SCHEDULER:-off}"
-      VLLM_DSPARK_LOCAL_ARGMAX: "${VLLM_DSPARK_LOCAL_ARGMAX:-1}"
-      VLLM_DSPARK_REPLICATE_MARKOV_W1: "${VLLM_DSPARK_REPLICATE_MARKOV_W1:-1}"
-      VLLM_DSPARK_FUSED_MARKOV_ARGMAX: "${VLLM_DSPARK_FUSED_MARKOV_ARGMAX:-0}"
-      VLLM_DSPARK_GPU_REJECTED_CONTEXT_MASK: "${VLLM_DSPARK_GPU_REJECTED_CONTEXT_MASK:-1}"
-      VLLM_DSPARK_REFERENCE_KV_QUANT_DEQUANT: "${VLLM_DSPARK_REFERENCE_KV_QUANT_DEQUANT:-0}"
-      VLLM_DSPARK_HARDWARE_SCHEDULER_EARLY_STOP: "${VLLM_DSPARK_HARDWARE_SCHEDULER_EARLY_STOP:-1}"
-      VLLM_DSV4_B12X_COMPRESSED_MLA: "${VLLM_DSV4_B12X_COMPRESSED_MLA:-0}"
-      VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE: "${VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE:-0}"
-      VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE_EXACT: "${VLLM_DSV4_DSPARK_DEFER_TARGET_CAPTURE_EXACT:-0}"
 
       TORCH_CUDA_ARCH_LIST: "${TORCH_CUDA_ARCH_LIST:-12.1a}"
       FLASHINFER_CUDA_ARCH_LIST: "${FLASHINFER_CUDA_ARCH_LIST:-12.1a}"
@@ -128,7 +120,7 @@ services:
       HEADLESS: "${HEADLESS:-}"
       MASTER_ADDR: "${MASTER_ADDR}"
       MASTER_PORT: "${MASTER_PORT:-25000}"
-      MTP_NUM_TOKENS: "${MTP_NUM_TOKENS:-3}"
+      MTP_NUM_TOKENS: "${MTP_NUM_TOKENS:-2}"
 
       # Reasoning toggle (see docs/06). on (default) = server-default thinking + the official
       # V4-Flash reasoning sampling (temp/top_p 1.0); off = non-think greedy, byte-identical to the
@@ -149,13 +141,13 @@ services:
         export CUDA_PATH="$${CUDA_PATH:-$${CUDA_HOME}}";
         export CUDAToolkit_ROOT="$${CUDAToolkit_ROOT:-$${CUDA_HOME}}";
         export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$${LD_LIBRARY_PATH:-}";
-        SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-3},\"draft_sample_method\":\"probabilistic\"}";
+        SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-2},\"draft_sample_method\":\"probabilistic\"}";
         if [ "$${DSPARK_REASONING:-on}" = "on" ]; then CHAT_KWARGS="{\"thinking\":true,\"reasoning_effort\":\"$${DSPARK_REASONING_EFFORT:-high}\"}"; GEN_OVERRIDE="{\"temperature\":1.0,\"top_p\":1.0}"; else CHAT_KWARGS="{\"thinking\":false}"; GEN_OVERRIDE="{\"temperature\":0.0,\"top_p\":1.0}"; fi;
         MEMTOTAL_KB="$$(awk '/^MemTotal:/{print $$2}' /proc/meminfo)";
-        REQUIRED_KB="$$(awk -v t="$$MEMTOTAL_KB" -v u="${GPU_MEMORY_UTILIZATION:-0.80}" 'BEGIN{printf "%d", t*u}')";
+        REQUIRED_KB="$$(awk -v t="$$MEMTOTAL_KB" -v u="${GPU_MEMORY_UTILIZATION:-0.85}" 'BEGIN{printf "%d", t*u}')";
         MARGIN_KB=$$((${MEM_MARGIN_GIB:-3} * 1024 * 1024));
         NEEDED_KB=$$((REQUIRED_KB + MARGIN_KB));
-        echo "== waiting for MemAvailable >= $$((NEEDED_KB/1024/1024)) GiB (util=${GPU_MEMORY_UTILIZATION:-0.80} + ${MEM_MARGIN_GIB:-3}GiB margin) before launching vllm serve — avoids the request_memory() race (a worker launched into a thin margin can die mid-rendezvous and desync its restart generation from the peer, which is loading a ~200s checkpoint on a fixed generation)";
+        echo "== waiting for MemAvailable >= $$((NEEDED_KB/1024/1024)) GiB (util=${GPU_MEMORY_UTILIZATION:-0.85} + ${MEM_MARGIN_GIB:-3}GiB margin) before launching vllm serve — avoids the request_memory() race (a worker launched into a thin margin can die mid-rendezvous and desync its restart generation from the peer, which is loading a ~200s checkpoint on a fixed generation)";
         for i in $$(seq 1 ${MEM_WAIT_MAX_ATTEMPTS:-120}); do
           AVAIL_KB="$$(awk '/^MemAvailable:/{print $$2}' /proc/meminfo)";
           if [ "$$AVAIL_KB" -ge "$$NEEDED_KB" ]; then echo "== memory margin cleared: $$((AVAIL_KB/1024/1024)) GiB available (attempt $$i/${MEM_WAIT_MAX_ATTEMPTS:-120})"; break; fi;
@@ -172,12 +164,12 @@ services:
         --kv-cache-dtype ${KV_CACHE_DTYPE:-nvfp4_ds_mla}
         --block-size 256
         --max-model-len ${MAX_MODEL_LEN:-1048576}
-        --max-num-seqs ${MAX_NUM_SEQS:-6}
+        --max-num-seqs ${MAX_NUM_SEQS:-12}
         --max-num-batched-tokens ${MAX_NUM_BATCHED_TOKENS:-8192}
         --long-prefill-token-threshold ${LONG_PREFILL_TOKEN_THRESHOLD:-0}
         --shutdown-timeout ${SHUTDOWN_TIMEOUT:-30}
         --max-cudagraph-capture-size ${MAX_CUDAGRAPH_CAPTURE_SIZE:-72}
-        --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.80}
+        --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
         ${KV_CACHE_MEMORY_BYTES:+--kv-cache-memory-bytes ${KV_CACHE_MEMORY_BYTES}}
         --enable-prefix-caching
         --no-async-scheduling

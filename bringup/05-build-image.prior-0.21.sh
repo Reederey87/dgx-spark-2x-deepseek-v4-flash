@@ -18,6 +18,9 @@ source "$KIT/../runtime/cluster.env"
 
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
+: "${RECIPE_REPO:?uncomment the 0.21.x ROLLBACK block in cluster.env section 4 first}"
+: "${RECIPE_SHA:?uncomment the 0.21.x ROLLBACK block in cluster.env section 4 first}"
+
 ssh "$CLUSTER_USER@$HEAD_HOST" \
   "RECIPE_REPO='$RECIPE_REPO' RECIPE_SHA='$RECIPE_SHA' BASE_IMAGE_REF='$BASE_IMAGE_REF' DSPARK_VLLM_IMAGE='$DSPARK_VLLM_BASE_IMAGE' bash -s" <<'REMOTE' \
   || fail "image build failed on $HEAD_HOST" "inspect ~/dspark-recipe build logs on the head node"
