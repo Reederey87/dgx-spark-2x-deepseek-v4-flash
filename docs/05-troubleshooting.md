@@ -60,7 +60,8 @@ most-common cause first:
    garbage before it produces an obvious error. Rule it out first ([01](01-hardware-and-firmware.md)).
 2. **KV dtype.** Before blaming the model, drop `--kv-cache-dtype` from `nvfp4_ds_mla` to
    `fp8` and re-test. If `fp8` is coherent, the issue is in the NVFP4-KV path, not the weights.
-3. **`MTP_NUM_TOKENS`.** Confirm it is **`3`** and the draft method is probabilistic.
+3. **`MTP_NUM_TOKENS`.** Confirm it is **`2`** (or the documented fallback `3`) and the draft
+   method is probabilistic.
    Probabilistic `5` tested clean but reduced KV headroom and throughput; **greedy** `5`
    reintroduces the corruption risk. See the garble-fix section of
    [03-model-and-features.md](03-model-and-features.md).

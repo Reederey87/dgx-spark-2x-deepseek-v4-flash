@@ -12,7 +12,7 @@ are directional measurements from one 2× DGX Spark pair; re-run the gates on yo
 | Base image | `vllm/vllm-openai:v0.26.0` (official **linux/arm64**, digest-pinned `@sha256:ffb2d59b…abf52`) |
 | Overlay | `gx10-overlay-026.patch` — 13 files: the `dspark-vllm-gx10` GB10 overlay (Anemll, see [NOTICE](../NOTICE)) cherry-picked onto v0.26.0 with **zero conflicts**, plus two guards and two backports (below) |
 | Extra pins | FlashInfer `0.6.15-dev` @ `0472b9b3…`, b12x `0.15.3` @ `7dc6fb8f…` (unchanged from the 0.25.1 lane; `FLASHINFER_DISABLE_VERSION_CHECK=1`) |
-| Serving config | **unchanged** from the 0.25.1 lane except one flag: 1M ctx, `nvfp4_ds_mla`, DSpark n=3 probabilistic, util 0.85, `KV_CACHE_MEMORY_BYTES=21316272128`, **`--no-async-scheduling`** (see "Open items" — restores the reported KV pool at zero measured cost) |
+| Serving config | **unchanged** from the 0.25.1 lane except one flag: 1M ctx, `nvfp4_ds_mla`, DSpark n=3 probabilistic, util 0.85, `KV_CACHE_MEMORY_BYTES=21316272128`, **`--no-async-scheduling`** (see "Open items" — restores the reported KV pool at zero measured cost). **2026-07-29 update:** DSpark **n=2** + explicit `--attention-config '{"backend":"FLASHINFER_MLA_SPARSE_DSV4"}'` — see [11](11-v026-feature-qualification.md) |
 
 No CUDA rebuild: the official arm64 image supplies every 0.26 dependency (its
 `TORCH_CUDA_ARCH_LIST` includes 12.0 — family-compatible with GB10 sm_121a), so the lane is a

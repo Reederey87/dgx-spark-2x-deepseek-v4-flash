@@ -15,7 +15,8 @@ The serving image is built **in-house** as a thin Python layer on the official
 - **the warn-only `dspark_block_size` guard** — v0.26.0 hard-rejects
   `num_speculative_tokens=3 < dspark_block_size: 5` claiming garbled output; on this stack
   n=3 is measured garble-clean to 944K context (and n=5 costs −12% throughput), so the
-  overlay logs and proceeds (upstream issue vllm-project/vllm#50012);
+  overlay logs and proceeds (upstream issue vllm-project/vllm#50012). The guard covers any
+  n < 5 — prod now runs **n=2** (2026-07-29 K re-tune, see docs/11);
 - **the zero-token-prefill-chunk guard** — 0.26's capture/warmup batches (padded to
   `max_num_seqs`) emit zero-token prefill spans that crash flashinfer's sparse-MLA segment
   normalize (`cannot reshape tensor of 0 elements into shape [0, -1]`). The overlay skips
