@@ -6,8 +6,9 @@
 #       (the dspark-vllm-gx10 GB10 overlay cherry-picked onto v0.26.0 with zero
 #       conflicts, plus the warn-only dspark_block_size guard, the zero-token-prefill-
 #       chunk guard, and backports #50004/#49486) + git-pinned flashinfer/b12x.
-# HOW:  extract-then-patch — the 13 upstream files are pulled out of the base image,
-#       patched in a temp git repo, and COPYed back in. Upstream source is never
+# HOW:  extract-then-patch — the 12 upstream files the patch modifies are pulled out of
+#       the base image, patched in a temp git repo (which also creates the 1 new
+#       overlay-only file), and COPYed back in. Upstream source is never
 #       vendored in this repo (see NOTICE); the patch alone carries our delta.
 #
 # RUN ON ONE NODE, then distribute:
@@ -24,7 +25,10 @@ TAG="${PATCHED_TAG:-vllm-dspark-runtime:v026-gx10-cand4-backports}"
 PATCH="$HERE/gx10-overlay-026.patch"
 CONTEXT_DIR="$HERE/.overlay-build-vllm"
 
-FILES="$(grep -E '^\+\+\+ b/' "$PATCH" | sed 's|^+++ b/||')"
+# Extract only files the patch MODIFIES (its `--- a/` side). Files the patch CREATES
+# (`--- /dev/null`, e.g. the overlay-only experts/b12x_mxfp4_moe.py) do not exist in the
+# base image — docker cp fails on them (issue #7); git apply creates them in the temp repo.
+FILES="$(grep -E '^--- a/' "$PATCH" | sed 's|^--- a/||')"
 [ -n "$FILES" ] || { echo "FAIL: no file list parsed from $PATCH" >&2; exit 1; }
 docker image inspect "$BASE" >/dev/null 2>&1 || { echo "FAIL: base not pulled: $BASE" >&2; exit 1; }
 
