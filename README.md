@@ -236,3 +236,8 @@ only — it vendors no upstream source; the serving image is built from a pinned
 the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
 the recipe/image, and the GB10 kernels) each ship under their own licenses; see [NOTICE](NOTICE) for
 the attribution required by those licenses. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Thanks
+
+- **anemll** — the dspark-vllm-gx10 GB10 port this kit's serving lane is built on.
+- And everyone running this on their own pair — bug reports with logs are the fastest way to make the kit better.
