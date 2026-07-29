@@ -10,7 +10,7 @@ source "$KIT/cluster.env"
 bash "$KIT/stop-cluster.sh"
 
 echo "== disabling cluster units"
-ssh "$CLUSTER_USER@$HEAD_HOST"   'systemctl --user disable --now vllm-dsv4-watchdog.timer; systemctl --user disable vllm-dsv4-head.service' || true
+ssh "$CLUSTER_USER@$HEAD_HOST"   'systemctl --user disable --now vllm-dsv4-watchdog.timer; systemctl --user disable --now vllm-metrics-watch.timer; systemctl --user disable vllm-dsv4-head.service' || true
 ssh "$CLUSTER_USER@$WORKER_HOST" 'systemctl --user disable vllm-dsv4-worker.service' || true
 
 if [ -n "${CONFLICTING_SERVICE:-}" ]; then

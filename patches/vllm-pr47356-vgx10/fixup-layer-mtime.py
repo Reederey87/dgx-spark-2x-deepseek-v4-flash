@@ -63,7 +63,7 @@ def main():
     old_config_path = extracted_dir / old_config_rel
     config = json.loads(old_config_path.read_text())
     old_diff_ids = config["rootfs"]["diff_ids"]
-    assert old_diff_ids[-1] == f"sha256:{old_layer_path.name}" or True
+    assert old_diff_ids[-1] == f"sha256:{old_layer_path.name}"
     config["rootfs"]["diff_ids"][-1] = f"sha256:{new_layer_digest}"
 
     new_config_bytes = json.dumps(config, sort_keys=False, separators=(",", ":")).encode()
