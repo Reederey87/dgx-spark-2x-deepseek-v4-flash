@@ -149,8 +149,8 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
 | `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool (profiler-sized KV: ~2.28–2.38M tokens on this lane; with the `KV_CACHE_MEMORY_BYTES` pin: **2,948,751**). Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
 | `KV_CACHE_MEMORY_BYTES` | `21316272128` | Pins the KV pool in bytes instead of profiler sizing — **larger** (120.5% of the prior lane's 2,446,083 tokens) and **zero boot-to-boot variance**; the profiler's KV budget was silently carrying the sparse-MLA workspace + cudagraph capture. Set = vLLM skips profiling and ignores `GPU_MEMORY_UTILIZATION` for KV sizing. **No free-memory clamp** — an oversized pin OOMs the boot. Unset = profiler sizing returns. See `docs/08`. |
-| `MTP_NUM_TOKENS` | `3` | DSpark speculative draft length. Probabilistic `5` was garble-clean but lost KV headroom and throughput; greedy `5` is unsafe. Keep `3`. See `docs/03`. |
-| `MAX_CUDAGRAPH_CAPTURE_SIZE` | `96` | Keeps the spec-decode decode path graphed at concurrency. vLLM 0.25.1's formula is `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — note the `× 2` vs the prior lane's `48`. If `MTP_NUM_TOKENS→5`, raise to `144`. See `docs/08`. |
+| `MTP_NUM_TOKENS` | `2` | DSpark speculative draft length. Current default since the 2026-07-29 K re-tune on vLLM 0.26.0: **+3.8% single-stream decode vs `3`, concurrency-8 tie** — the primary workload is single-stream interactive decode. `3` is a fine fallback; greedy `5` remains unsafe. See `docs/03`, `docs/11`. |
+| `MAX_CUDAGRAPH_CAPTURE_SIZE` | `72` | Keeps the spec-decode decode path graphed at concurrency. vLLM 0.25.1's formula is `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — note the `× 2` vs the prior lane's `48`. `72` = `12 × (2+1) × 2` for the `MTP_NUM_TOKENS=2` default; if `MTP_NUM_TOKENS→5`, raise to `144`. See `docs/08`. |
 | `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no `@support_torch_compile`) — `1` IS the supported route for this model. **Keep `1`.** A controlled `0` ablation (2026-07-16) ran at baseline throughput/acceptance/KV — neither lever nor trap; an earlier scary datapoint was a capture artifact. See `docs/08`. |
 | `TRITON_CACHE_DIR` | `/cache/huggingface/triton` | Triton kernel cache **must** live on the persistent HF-cache bind — under breakable-cudagraph vLLM's cache-redirect never runs, so an unset value falls to container-ephemeral `/root/.triton/cache` and cold-recompiles on every recreate. See `docs/07`, `docs/08`. |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
@@ -178,6 +178,17 @@ Promotion-gate figures from **2026-07-28** (the in-house 0.26.0 rebase — see [
 | KV cache pool | **2,948,751 tokens** with the `KV_CACHE_MEMORY_BYTES` pin, max concurrency @ 1M ctx **2.81×** — same as the 0.25.1 lane. (First 0.26 boot read 2,075,155: upstream #47728 doubles the sliding-window admission reservation under `--async-scheduling`; this repo ships `--no-async-scheduling`, measured throughput-neutral — see [docs/10](docs/10-vllm-026-rebase.md) "Open items") |
 | Base image | official `linux/arm64` `vllm/vllm-openai:v0.26.0` (digest-pinned) + the gx10 overlay + backports #50004/#49486, built in-house by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) |
 | Rollback | `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane) — one config swap, both images kept on both nodes |
+
+**2026-07-29 qualification round** ([docs/11](docs/11-v026-feature-qualification.md)) — current defaults:
+
+| Metric | Result |
+|---|---|
+| Speculative draft length | **n=2** (was 3) — same-day lanes: **C1 35.42 vs 34.13 tok/s (+3.8%)**, C8 91.63 vs 90.84 (tie); n=4 lost both axes (−5.5% C1 / −9.3% C8) |
+| Spec-decode acceptance (eval workload) | **~0.80** (0.795–0.806) — rises at n=2 exactly as rejection sampling predicts; bench workload ~0.55 |
+| Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens**, battery acceptance **0.842** |
+| Composite eval score | **100 / 100** (×3, post-promotion) |
+| Attention backend | pinned explicitly: `--attention-config '{"backend":"FLASHINFER_MLA_SPARSE_DSV4"}'` (resolves to the identical SM120 class as the default — a drift-guard, not a behavior change) |
+| Dependency manifest | release lock (torch 2.11.0, cutlass-dsl 4.6.0, tvm-ffi 0.1.10, flashinfer-cubin 0.6.14) **except** FlashInfer `0.6.15-dev @0472b9b3` — proven load-bearing: the stock-0.6.14 lane crashed on first decode traffic (`flashinfer/mla/_core.py:192` empty sparse-index reshape) |
 
 ### Prior 0.21.x lane (for reference, `GPU_MEMORY_UTILIZATION=0.80`, 2026-07-08)
 
@@ -213,6 +224,7 @@ Promotion-gate figures from **2026-07-28** (the in-house 0.26.0 rebase — see [
 | [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The A/B decision ledger and the **vLLM 0.25.1 promotion** (2026-07-15): the two-candidate distinction, config deltas, hardening pass, residual gaps, and the preserved prior 0.21.x lane + rollback. |
 | [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask, incl. the +1.8% TPOT DeepSeek-V4 perf commit. |
 | [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md) | The **vLLM 0.26.0 promotion** (2026-07-28): the in-house rebase (official image + gx10 overlay + backports), the two guards it needs, the acceptance-regression hunt, evidence, and rollback. |
+| [docs/11-v026-feature-qualification.md](docs/11-v026-feature-qualification.md) | The **0.26.0 feature-qualification round** (2026-07-29): the 12-row release-feature audit (what's active, ineligible, or evidence-backed), the DSpark **n=2** K re-tune, the explicit backend pin, and the FlashInfer vendor-pin crash proof. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---

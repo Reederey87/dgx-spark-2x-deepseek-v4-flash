@@ -20,10 +20,14 @@ The serving substrate — the things every feature below sits on top of — is:
   weights. The weights are FP8/MXFP4. Do not read "NVFP4" anywhere in this stack as "4-bit
   weights."
 - **DSpark speculative decoding** (multi-token prediction / MTP):
-  `--speculative-config '{"method":"dspark","num_speculative_tokens":3,"draft_sample_method":"probabilistic"}'`,
-  with the draft length driven by `MTP_NUM_TOKENS` (default `3`).
+  `--speculative-config '{"method":"dspark","num_speculative_tokens":2,"draft_sample_method":"probabilistic"}'`,
+  with the draft length driven by `MTP_NUM_TOKENS` (default `2` since the 2026-07-29
+  K re-tune — see [11](11-v026-feature-qualification.md); `3` was the prior default).
 - **The B12X MoE path** (`VLLM_USE_B12X_MOE=1`) — the fast MoE kernel; the DeepGEMM MoE path
   is the *slow* fallback (see [B12X note](#the-b12x-moe-path-the-single-biggest-speed-lever)).
+  ⚠ 0.26.0 reality check (2026-07-29): the env var is **set-but-inert** on the 0.26 lane —
+  the overlay's MXFP4 oracle auto-selects `DEEPGEMM_MXFP4` (`DeepGemmFP4Experts`), which
+  measured flat-to-up vs B12X. The B12X note below describes the 0.21.x/0.25.x lanes.
 
 > ⚠️ **Maturity disclaimer — read before trusting any of this.** All four features below,
 > and the image they ship in, trace to a small number of community authors and to
@@ -207,7 +211,8 @@ what the DSA indexer + MTP draft/verify loop run against.
 Cold-start **tool-call / Chinese-character garble under concurrency** was traced to a **greedy**
 draft of length 5. The fix, which is the current default, is:
 
-- `MTP_NUM_TOKENS=3` (down from a greedy 5), and
+- `MTP_NUM_TOKENS=3` (down from a greedy 5; the current default is **`2`** since the
+  2026-07-29 K re-tune — see [11](11-v026-feature-qualification.md)), and
 - **probabilistic** draft (`"draft_sample_method":"probabilistic"` in the speculative config), and
 - the **FlashInfer sampler**: `VLLM_USE_FLASHINFER_SAMPLER=1`.
 
