@@ -41,7 +41,7 @@ set -euo pipefail
 docker run --rm --entrypoint python3 "$DSPARK_VLLM_IMAGE" -c "import vllm; print('vllm', vllm.__version__)"
 help="$(docker run --gpus=all --rm --entrypoint vllm "$DSPARK_VLLM_IMAGE" serve --help=all)"
 for flag in --nnodes --node-rank --headless; do
-  printf '%s\n' "$help" | grep -q -- "$flag" \
+  printf '%s\n' "$help" | grep -- "$flag" > /dev/null \
     || { echo "FAIL: vllm serve missing $flag — image is not cluster-capable" >&2; exit 1; }
 done
 printf '%s\n' "$help" | grep -E -- '--nnodes|--node-rank|--headless' | head -5
