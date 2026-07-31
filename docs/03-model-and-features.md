@@ -8,10 +8,16 @@ can trace every claim to a line.
 
 ## What this serves
 
-**`deepseek-ai/DeepSeek-V4-Flash-DSpark`** — a **284B-parameter MoE** model with **~13B
+**`deepseek-ai/DeepSeek-V4-Flash-0731`** — a **284B-parameter MoE** model with **~13B
 active** parameters per token, **text-only**, served **TP=2** across two DGX Spark (GB10 /
 `sm_121a`) nodes over the QSFP fabric. Native context is **1M tokens** (the YaRN ceiling is
 `65536 × 16 = 1,048,576`, which is the default `MAX_MODEL_LEN`).
+
+0731 is the **official V4-Flash release** (2026-07-31), superseding the
+`DeepSeek-V4-Flash-DSpark` preview: same architecture, same FP4+FP8 weight layout and
+~155.4 GiB footprint, **byte-identical `config.json` and tokenizer**, and the same DSpark
+speculative-decoding module attached — everything below applies unchanged. The preview
+remains the weights-rollback option. Upgrade evidence: [12](12-dsv4-flash-0731-upgrade.md).
 
 The serving substrate — the things every feature below sits on top of — is:
 

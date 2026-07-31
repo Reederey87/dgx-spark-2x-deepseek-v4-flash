@@ -7,7 +7,7 @@ source "$KIT/../runtime/cluster.env"
 
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
-remote_model_dir="$HF_CACHE/hub/models--deepseek-ai--DeepSeek-V4-Flash-DSpark"
+remote_model_dir="$HF_CACHE/hub/models--${DSPARK_MODEL//\//--}"
 
 ssh "$CLUSTER_USER@$WORKER_HOST" "mkdir -p '$HF_CACHE/hub'" \
   || fail "could not create worker HF hub dir" "check worker SSH and permissions"

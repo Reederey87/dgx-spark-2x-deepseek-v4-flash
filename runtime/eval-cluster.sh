@@ -281,9 +281,16 @@ import json, sys
 path, model = sys.argv[1], sys.argv[2]
 payload = {
     "model": model,
-    "messages": [{"role": "user", "content": "Write a 200-word story about a quiet datacenter cutover."}],
+    # Prompt dropped its "200-word" constraint 2026-07-31: DeepSeek-V4-Flash-0731 treats a
+    # numeric length constraint as something to VERIFY inside thinking — it iteratively
+    # re-drafts the story (word-counting CoT observed past 16K chars at temp=0) until
+    # max_tokens cut it off with empty content, failing this probe's empty-content guard
+    # deterministically (temp=0 + prefix cache). The probe's purpose is concurrency +
+    # non-empty + garble, not length-constraint compliance, so the constraint is removed;
+    # con_tokps is informational only. Cap raised 2048 -> 4096 for thinking headroom.
+    "messages": [{"role": "user", "content": "Write a short story about a quiet datacenter cutover."}],
     "temperature": 0,
-    "max_tokens": 2048,
+    "max_tokens": 4096,
 }
 json.dump(payload, open(path, "w", encoding="utf-8"))
 PY
