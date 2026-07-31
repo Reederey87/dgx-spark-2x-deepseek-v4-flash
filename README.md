@@ -142,6 +142,9 @@ tool-parser paths after each head restart — see [docs/07](docs/07-observabilit
 An optional Xid monitor is installed disabled on both nodes; it captures hardware-fault evidence
 and alerts but categorically never restarts vLLM.
 
+Running an agent client (Hermes Agent) against the deployment — config profile, switch script,
+and the model-specific gotchas: [hermes/README.md](hermes/README.md).
+
 ---
 
 ## Tunables (the "sweet spot")

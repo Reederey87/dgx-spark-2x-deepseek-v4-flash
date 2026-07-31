@@ -1,0 +1,155 @@
+# Hermes profile: DeepSeek-V4-Flash on the local 2xSpark cluster (OpenAI-compatible
+# server on the head node's loopback, 127.0.0.1:8000 — the API is loopback-only,
+# so Hermes must run on the head node itself or reach it through a tunnel).
+# Install with hermes/switch-hermes.sh
+#
+# Key choices (and why):
+#   - base_url :8000 in BOTH model.base_url and providers.custom.base_url
+#     (a mismatch silently detaches the provider block — keep them identical).
+#   - context_length 1048576 (the served MAX_MODEL_LEN) with compaction tuned
+#     for that window: threshold_tokens 260000 is the binding trigger, prune
+#     48000 / reclaim 20000 — prune stays below the compaction trigger;
+#     idle_compact stays 0 while compaction is local. Long-context prefill
+#     runs ~855 tok/s on a 2x GB10 pair, so compacting early beats
+#     re-prefilling a huge window.
+#   - Thinking = exactly ONE knob: agent.reasoning_effort: high (forwarded
+#     top-level; steerable at runtime with /reasoning). Never set it to
+#     "none" — that emits an Ollama-style think=false this server rejects
+#     with 422. Chain-of-thought arrives in message.reasoning, NOT
+#     reasoning_content. The server default already enables thinking
+#     (DSPARK_REASONING=on in cluster.env); this knob sets the effort.
+#   - auxiliary.compression stays provider: main (local) with the off-spelling
+#     for THIS model: chat_template_kwargs.thinking: false.
+#   - supports_vision: false — V4-Flash is text-only, so auxiliary.vision is
+#     an OPTIONAL cloud model (needs an OpenAI-compatible key); there is no
+#     local vision to swap to. web_extract/title_generation likewise default
+#     to a cheap cloud model — swap to provider: main for fully-local
+#     (slower, competes with turns).
+#   - fallback_providers is OPTIONAL — used only when the local server is
+#     unreachable; delete the block to run local-only (Hermes then surfaces
+#     local errors directly).
+model:
+  provider: custom
+  base_url: http://127.0.0.1:8000/v1
+  default: deepseek-v4-flash-dspark
+  context_length: 1048576
+  supports_vision: false
+  api_mode: chat_completions
+  max_tokens: 65536
+# OPTIONAL cloud fallback rung — used only when the local server is unreachable.
+# Any OpenAI-compatible provider/model works here; delete the block to run
+# local-only (Hermes then has no fallback and surfaces local errors directly).
+fallback_providers:
+- provider: openai-api
+  model: gpt-5.5
+agent:
+  verify_on_stop: false
+  disabled_toolsets:
+  - computer_use
+  - video
+  - video_gen
+  - x_search
+  - homeassistant
+  - spotify
+  - yuanbao
+  max_turns: 60
+  reasoning_effort: high
+browser:
+  cdp_url: http://127.0.0.1:9222
+  allow_unsafe_evaluate: true
+  cloud_provider: local
+tool_output:
+  max_bytes: 400000
+  max_lines: 12000
+  max_line_length: 2000
+compression:
+  enabled: true
+  threshold: 0.25
+  threshold_tokens: 260000
+  proactive_prune_tokens: 48000
+  target_ratio: 0.2
+  protect_last_n: 20
+  protect_first_n: 3
+  model_thresholds:
+    deepseek-v4-flash-dspark: 0.25
+  min_tail_user_messages: 3
+  idle_compact_after_seconds: 0
+  proactive_prune_min_result_chars: 8000
+  proactive_prune_min_reclaim_tokens: 20000
+  hygiene_hard_message_limit: 5000
+auxiliary:
+  vision:
+    # OPTIONAL cloud auxiliary (needs an OpenAI-compatible key) — the local
+    # model is text-only, there is no 'provider: main' swap for vision here.
+    provider: openai-api
+    model: gpt-5.5
+    timeout: 180
+  web_extract:
+    # OPTIONAL cloud auxiliary; swap for 'provider: main' to keep everything
+    # local (slower, competes with turns).
+    provider: openai-api
+    model: gpt-5.5
+    timeout: 360
+  title_generation:
+    # OPTIONAL cloud auxiliary; same swap applies.
+    provider: openai-api
+    model: gpt-5.5
+    timeout: 30
+  compression:
+    provider: main
+    model: ''
+    timeout: 1800
+    extra_body:
+      chat_template_kwargs:
+        thinking: false
+display:
+  show_reasoning: true
+  tool_progress: all
+tts:
+  provider: openai
+  openai:
+    model: gpt-4o-mini-tts
+    voice: alloy
+    speed: 1.0
+approvals:
+  destructive_slash_confirm: false
+command_allowlist:
+- script execution via -e/-c flag
+- script execution via heredoc
+onboarding:
+  seen:
+    busy_input_prompt: true
+    tool_progress_prompt: true
+_config_version: 33
+mcp_servers:
+  exa:
+    url: https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa
+    headers:
+      x-api-key: ${EXA_API_KEY}
+      Accept: application/json, text/event-stream
+    tools:
+      include:
+      - web_search_exa
+      - web_fetch_exa
+      - web_search_advanced_exa
+      resources: false
+      prompts: false
+    enabled: true
+    timeout: 120
+    connect_timeout: 60
+plugins:
+  enabled: []
+image_gen:
+  provider: openai
+  model: gpt-image-2-medium
+providers:
+  custom:
+    base_url: http://127.0.0.1:8000/v1
+    request_timeout_seconds: 3600
+    stale_timeout_seconds: 900
+web:
+  backend: exa
+mcp_discovery_timeout: 30
+updates:
+  pre_update_backup: full
+  non_interactive_local_changes: stash
