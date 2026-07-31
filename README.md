@@ -1,10 +1,17 @@
 # dgx-spark-2x-deepseek-v4-flash
 
-Reproducible kit to serve **DeepSeek-V4-Flash-DSpark** (284B MoE / ~13B active, NVFP4-KV,
+Reproducible kit to serve **DeepSeek-V4-Flash-0731** (284B MoE / ~13B active, NVFP4-KV,
 up to 1M context) on a **2× NVIDIA DGX Spark** (GB10 Grace Blackwell, ARM64, CUDA 13)
 cluster with **vLLM tensor-parallel = 2** over a single **QSFP 200GbE** cable. The two
 Sparks act as one inference engine; the OpenAI-compatible API is served on the head node's
 loopback (`127.0.0.1:8000`).
+
+**0731 is the official V4-Flash release** (2026-07-31), superseding the
+`DeepSeek-V4-Flash-DSpark` preview this kit originally shipped: same FP4+FP8 checkpoint
+family and ~155.4 GiB footprint, byte-identical config/tokenizer, DSpark speculative
+decoding module attached — and a large agentic-capability jump (see
+[Performance](#performance)). Deployments on the preview can upgrade by flipping one
+variable (`DSPARK_MODEL`); the preview stays a supported rollback.
 
 This repo is **orchestration and documentation only**. It vendors no upstream source: the
 serving image is *built from* a pinned upstream base and the weights are *pulled from*
@@ -20,8 +27,9 @@ Everything a third party needs is **public, no authentication anywhere**:
 
 - **Hardware:** 2× DGX Spark (GB10) + one QSFP cable between them + Docker — the only
   non-negotiable inputs.
-- **Weights:** [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark)
-  is a public Hugging Face repo — no token required.
+- **Weights:** [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
+  is a public Hugging Face repo — no token required. (Preview rollback:
+  [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark).)
 - **Serving image:** the official `vllm/vllm-openai:v0.26.0` (linux/arm64, public on Docker
   Hub), the overlay patch in this repo, and two public git pins (b12x, FlashInfer). **No
   prebuilt third-party image is required** — the trust surface is upstream vLLM plus a
@@ -171,23 +179,55 @@ the pool comes back for free; see `docs/10`, `docs/11`).
 Measured on **one** 2× GB10 pair (`GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`).
 These are **observations, not guarantees** — yours will vary.
 
+**DeepSeek-V4-Flash-0731 (current, 2026-07-31):**
+
 | Metric | Result |
 |---|---|
 | **Composite eval score** | **100 / 100** — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 1.00 |
-| Throughput — single stream | **35.4 tok/s** |
-| Throughput — aggregate @ concurrency 8 | **91.6 tok/s** |
-| Spec-decode acceptance (eval / bench workload) | **~0.80 / ~0.55** (draft len 2, probabilistic) |
-| Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens** (10%/90% depths); battery acceptance **0.842** |
-| KV cache pool | **2,948,751 tokens** (pinned), max concurrency @ 1M ctx **2.81×** |
+| Throughput — single stream (C1) | **34.2 tok/s** best (6 batches) |
+| Throughput — aggregate @ concurrency 8 (C8) | **93.0 tok/s** best, ~89.2 mean (6 batches) |
+| Spec-decode acceptance (eval-mix / nprobe battery) | **0.796–0.823 / 0.875** (draft len 2, probabilistic) |
+| Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens** (10%/90% depths) + 200K; garble 1.00 |
+| KV cache pool | **2,948,751 tokens** (pinned) — unchanged vs preview; max concurrency @ 1M ctx **2.81×** |
 | Serving image | `vllm-dspark-runtime:v026-gx10-cand4-backports` — official `linux/arm64` `vllm/vllm-openai:v0.26.0` + the gx10 overlay + backports #50004/#49486, built by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) |
 | Dependencies | release lock (torch 2.11.0, cutlass-dsl 4.6.0, tvm-ffi 0.1.10, flashinfer-cubin 0.6.14) **except** FlashInfer `0.6.15-dev @0472b9b3` — proven load-bearing (the stock-0.6.14 build crashes on first decode traffic; see `docs/11`) |
-| Rollback | `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane) — one config swap, both images kept on both nodes |
+| Rollback | weights: flip `DSPARK_MODEL` back to `DeepSeek-V4-Flash-DSpark` (both checkpoints can stay resident) · image: `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane) |
+
+**0731 vs the best preview deploy** (same pair, same image, same-day A/B — preview numbers
+are the 2026-07-29 n=2 promotion re-measured pre-upgrade):
+
+| Metric | Preview (DSpark) | 0731 | Delta |
+|---|---|---|---|
+| C8 aggregate tok/s | 94.2 best / ~89.3 mean | 93.0 best / ~89.2 mean | **tie (within noise)** |
+| C1 single-stream tok/s | 36.1 best / ~35.8 mean | 34.2 best / ~32.7 mean | **−5…−8%** |
+| Spec-decode acceptance — eval workload | 0.788 | **0.796–0.823** | **up** |
+| Spec-decode acceptance — nprobe battery | 0.842 | **0.875** | **+3.9%** |
+| Needles @ 944K + 200K | 3/3 HIT | 3/3 HIT | unchanged |
+| Garble / eval composite | 1.00 / 100 | 1.00 / 100 | unchanged |
+| KV pool (pinned) | 2,948,751 tok | 2,948,751 tok | unchanged |
+
+Net: throughput parity at concurrency, a single-digit single-stream dip, **better draft
+acceptance everywhere** — and the reason to upgrade is quality, not speed:
+
+![DeepSeek-V4-Flash-0731 agentic benchmarks vs the preview, V4-Pro preview, GLM-5.2 and Opus-4.8 (source: DeepSeek model card)](docs/images/deepseek-v4-flash-0731-agentic-benchmarks.jpeg)
+
+DeepSeek's published agentic results for 0731 vs the preview this kit previously deployed:
+**Terminal-Bench 2.1 82.7 vs 61.8**, **DeepSWE 54.4 vs 7.3**, **NL2Repo 54.2 vs 39.4**,
+Cybergym 76.7 vs 38.7, Toolathlon-Verified 70.3 vs 49.7 — ahead of even the V4-Pro preview
+on every row (source: [DeepSeek-V4-Flash-0731 model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)).
+Upgrade evidence + the two offline-cache traps it surfaced: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
+
+One 0731 behavior worth knowing: on prompts with **numeric length constraints** or very
+long single-shot asks it deliberates much longer inside thinking (word-counting and
+re-drafting drafts — coherent, not garble) and can exceed tight `max_tokens`. Irrelevant
+for tool-use/agentic traffic; give long-form asks room or chunk them. See `docs/12`.
 
 `eval-cluster.sh` prints the composite plus the throughput/latency probes in one run;
 `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes. Prior-lane figures
 (0.25.1, 0.21.x) are preserved in [docs/08](docs/08-optimization-and-vllm-025.md); the
-0.26.0 promotion evidence is in [docs/10](docs/10-vllm-026-rebase.md) and the day-2
-qualification round in [docs/11](docs/11-v026-feature-qualification.md).
+0.26.0 promotion evidence is in [docs/10](docs/10-vllm-026-rebase.md), the day-2
+qualification round in [docs/11](docs/11-v026-feature-qualification.md), and the 0731
+model upgrade in [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 
 ---
 
@@ -206,6 +246,7 @@ qualification round in [docs/11](docs/11-v026-feature-qualification.md).
 | [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask, incl. the +1.8% TPOT DeepSeek-V4 perf commit. |
 | [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md) | The **vLLM 0.26.0 promotion** (2026-07-28): the in-house rebase (official image + gx10 overlay + backports), the two guards it needs, the acceptance-regression hunt, evidence, and rollback. |
 | [docs/11-v026-feature-qualification.md](docs/11-v026-feature-qualification.md) | The **0.26.0 feature-qualification round** (2026-07-29): the 12-row release-feature audit (what's active, ineligible, or evidence-backed), the DSpark **n=2** K re-tune, the explicit backend pin, and the FlashInfer vendor-pin crash proof. |
+| [docs/12-dsv4-flash-0731-upgrade.md](docs/12-dsv4-flash-0731-upgrade.md) | The **DeepSeek-V4-Flash-0731 model upgrade** (2026-07-31): compatibility proof (byte-identical config/tokenizer, same footprint), the A/B gate numbers vs the preview, the two offline-cache traps (`refs/main`), and the 0731 long-form deliberation trait. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---

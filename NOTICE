@@ -16,8 +16,11 @@ Attributed upstreams:
                                    (patches/vllm-026-rebase/); the prior lane pinned
                                    0.25.1, with upstream PR #47356 vendored as a source
                                    patch (patches/vllm-pr47356-vgx10/).
-  - DeepSeek-V4-Flash-DSpark     — model weights, by DeepSeek AI, under the
+  - DeepSeek-V4-Flash-0731       — model weights, by DeepSeek AI, under the
                                    license stated on its Hugging Face model card
+                                   (MIT); the prior preview checkpoint
+                                   DeepSeek-V4-Flash-DSpark remains the
+                                   weights-rollback option, same license
   - anemll                       — the dspark-vllm-gx10 community GB10 port: the gx10
                                    overlay at the heart of the 0.26.0 lane, and the
                                    digest-pinned vLLM 0.25.1 base image of the prior lane

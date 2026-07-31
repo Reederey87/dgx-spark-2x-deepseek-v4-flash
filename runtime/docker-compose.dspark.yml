@@ -154,7 +154,7 @@ services:
           if [ "$$i" -eq "${MEM_WAIT_MAX_ATTEMPTS:-120}" ]; then echo "== WARNING: memory margin never cleared after ${MEM_WAIT_MAX_ATTEMPTS:-120} attempts; proceeding anyway — vLLM's own request_memory() check will likely fail cleanly"; fi;
           sleep ${MEM_WAIT_POLL_SECONDS:-5};
         done;
-        exec /usr/local/bin/vllm serve ${DSPARK_MODEL:-deepseek-ai/DeepSeek-V4-Flash-DSpark}
+        exec /usr/local/bin/vllm serve ${DSPARK_MODEL:-deepseek-ai/DeepSeek-V4-Flash-0731}
         --served-model-name ${SERVED_MODEL_NAME:-deepseek-v4-flash-dspark}
         --host ${VLLM_HOST:-127.0.0.1}
         --port ${API_PORT:-8000}
