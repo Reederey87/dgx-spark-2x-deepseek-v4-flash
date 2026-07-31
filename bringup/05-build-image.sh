@@ -36,10 +36,10 @@ ssh "$CLUSTER_USER@$HEAD_HOST" \
 echo "== verifying the patched image is cluster-capable"
 ssh "$CLUSTER_USER@$HEAD_HOST" \
   "DSPARK_VLLM_IMAGE='$DSPARK_VLLM_IMAGE' bash -s" <<'REMOTE' \
-  || fail "patched image verification failed on $HEAD_HOST" "inspect the image / vllm serve --help"
+  || fail "patched image verification failed on $HEAD_HOST" "inspect the image / vllm serve --help=all"
 set -euo pipefail
 docker run --rm --entrypoint python3 "$DSPARK_VLLM_IMAGE" -c "import vllm; print('vllm', vllm.__version__)"
-help="$(docker run --rm --entrypoint vllm "$DSPARK_VLLM_IMAGE" serve --help)"
+help="$(docker run --gpus=all --rm --entrypoint vllm "$DSPARK_VLLM_IMAGE" serve --help=all)"
 for flag in --nnodes --node-rank --headless; do
   printf '%s\n' "$help" | grep -q -- "$flag" \
     || { echo "FAIL: vllm serve missing $flag — image is not cluster-capable" >&2; exit 1; }
