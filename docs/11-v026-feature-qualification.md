@@ -1,7 +1,8 @@
 # vLLM 0.26.0 feature qualification (2026-07-29)
 
 A 12-row audit of the v0.26.0 release against the live 2× GB10 lane
-(`vllm-dspark-runtime:v026-gx10-cand4-backports`), each row closed with source, runtime, or
+(`vllm-dspark-runtime:v026-gx10-cand4-backports` — superseded by **cand7** on 2026-08-10,
+throughput-neutral; see [13](13-vllm-026-cand7.md)), each row closed with source, runtime, or
 A/B evidence. Two production changes came out of it (below); everything else was verified,
 rejected, or filed as a follow-up.
 

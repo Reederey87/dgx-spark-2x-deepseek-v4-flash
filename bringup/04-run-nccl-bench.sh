@@ -41,7 +41,7 @@ run_arm() {
     >"$out" 2>&1
   local busbw transport
   busbw="$(grep 'Avg bus bandwidth' "$out" | awk '{print $NF}' | tail -1)"
-  transport="$(grep -E 'NET/IB|NET/Socket|NCCL_IB_HCA|NCCL_IB_GID_INDEX|Selected|Using network' "$out" | tail -8 | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g')"
+  transport="$(grep -E 'NET/IB|NET/Socket|NCCL_IB_HCA|NCCL_IB_GID_INDEX|Selected|Using network' "$out" | tail -8 | tr '\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g' || true)"
   printf '%s\t%s\t%s\n' "$name" "${busbw:-0}" "${transport:-no transport line found}"
   echo "full log: $out" >&2
 }

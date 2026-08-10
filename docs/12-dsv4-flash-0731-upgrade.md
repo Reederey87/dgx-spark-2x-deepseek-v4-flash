@@ -22,7 +22,7 @@ like the preview's `DeepSeek-V4-Flash-DSpark` repo.
 | `config.json` | **field-identical** to the preview — same arch (`DeepseekV4ForCausalLM`), vocab 129280, YaRN 65536×16, fp8 quant config, `expert_dtype: fp4`, and every `dspark_*` field (`dspark_block_size: 5`, noise token, target layers, markov rank) |
 | `tokenizer.json` / `tokenizer_config.json` | **byte-identical** — both repos' snapshots link the same blob (`628e3364…`), sha256-verified |
 | Weight footprint | `model.safetensors.index.json` `total_size` **166,878,536,440 B (~155.4 GiB)** — within 8 MB of the preview. HF's "304B params / I8" widget is logical-parameter accounting (FP4 experts pack 2 per byte); it is not a storage change |
-| Serving stack | unchanged — same image (`v026-gx10-cand4-backports`), same knobs, same served name `deepseek-v4-flash-dspark`, same KV pin |
+| Serving stack | unchanged — same image (`v026-gx10-cand4-backports` at the time; **cand7** since 2026-08-10, throughput-neutral — see [13](13-vllm-026-cand7.md)), same knobs, same served name `deepseek-v4-flash-dspark`, same KV pin |
 
 Conclusion: a **pure weights swap**. `DSPARK_MODEL` (+ an optional `DSPARK_REVISION` pin)
 is the only configuration delta; the pinned revision here is `9e165c30e2704aec5d9d593cce3eebd58bbef1cb`.

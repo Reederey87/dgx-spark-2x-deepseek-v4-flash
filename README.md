@@ -1,46 +1,73 @@
 # dgx-spark-2x-deepseek-v4-flash
 
-Reproducible kit to serve **DeepSeek-V4-Flash-0731** (284B MoE / ~13B active, NVFP4-KV,
-up to 1M context) on a **2× NVIDIA DGX Spark** (GB10 Grace Blackwell, ARM64, CUDA 13)
-cluster with **vLLM tensor-parallel = 2** over a single **QSFP 200GbE** cable. The two
-Sparks act as one inference engine; the OpenAI-compatible API is served on the head node's
-loopback (`127.0.0.1:8000`).
+Two desk-side **NVIDIA DGX Sparks**, one QSFP cable, and this kit — that's everything you
+need to serve **DeepSeek-V4-Flash-0731** (a 284B-parameter MoE, ~13B active per token) at
+up to **1M tokens of context**. vLLM splits the model across both boxes (tensor-parallel
+2), and the head node exposes a plain OpenAI-compatible API on its loopback
+(`127.0.0.1:8000`). This repo is the full recipe: configs, scripts, systemd units, and
+docs that explain *why* every knob is set the way it is.
 
 **0731 is the official V4-Flash release** (2026-07-31), superseding the
-`DeepSeek-V4-Flash-DSpark` preview this kit originally shipped: same FP4+FP8 checkpoint
-family and ~155.4 GiB footprint, byte-identical config/tokenizer, DSpark speculative
-decoding module attached — and a large agentic-capability jump (see
-[Performance](#performance)). Deployments on the preview can upgrade by flipping one
-variable (`DSPARK_MODEL`); the preview stays a supported rollback.
+`DeepSeek-V4-Flash-DSpark` preview this kit originally shipped. Same checkpoint family,
+same ~155.4 GiB footprint, byte-identical config and tokenizer — but a large jump in
+agentic capability (see [Performance](#performance)). Already running the preview?
+Upgrading is one variable (`DSPARK_MODEL`, plus its `DSPARK_REVISION` pin), and the
+preview stays a supported rollback.
 
-This repo is **orchestration and documentation only**. It vendors no upstream source: the
-serving image is *built from* a pinned upstream base and the weights are *pulled from*
-Hugging Face at deploy time. The current lane is **vLLM 0.26.0** — the official arm64
-`vllm/vllm-openai` image plus the gx10 GB10 overlay and two DSv4 backports, built in-house
-as a thin layer ([patches/vllm-026-rebase/](patches/vllm-026-rebase/)). Prior lanes
-(0.25.1, 0.21.x) stay rollback-able and are preserved in
-[docs/08](docs/08-optimization-and-vllm-025.md). See [NOTICE](NOTICE) for upstream attribution.
+Nothing here is a black box. The serving image is *built* from the pinned, official
+arm64 `vllm/vllm-openai:v0.26.0` image plus a small reviewable patch (the gx10 GB10
+overlay + five DSv4 backports — [patches/vllm-026-rebase/](patches/vllm-026-rebase/)),
+and the weights are pulled from Hugging Face at deploy time. No prebuilt third-party
+image, no accounts, no tokens. Prior lanes (0.25.1, 0.21.x) are preserved one config swap
+away ([docs/08](docs/08-optimization-and-vllm-025.md)); the latest image update and how
+its picks were chosen is [docs/13](docs/13-vllm-026-cand7.md). See [NOTICE](NOTICE) for
+upstream attribution.
+
+## Why this kit
+
+Two desktop boxes and one cable get you:
+
+- **A 284B MoE with a 1M context window, at home.** The two Sparks pool ~242 GiB of
+  unified memory, and NVFP4 KV quantization stretches that into a **2,948,751-token KV
+  pool** — 2.81 full-length 1M sessions at once. Long-context agentic work stops being
+  theoretical on this hardware.
+- **Real speed, measured — not claimed.** ~34 tok/s for a single stream, ~93 tok/s
+  aggregate at concurrency 8, and the DSpark speculative drafter lands **0.796–0.875
+  measured acceptance**. Every number ships with its workload and its gate in
+  `docs/08`–`docs/13`.
+- **One cable, no cluster plumbing.** Tensor-parallel over a single QSFP 200GbE link: no
+  Ray, no switch, no Ethernet fabric — NCCL RDMA at ~23 GB/s, vLLM's native `mp` backend,
+  and plain systemd user units (no root).
+- **Production ops, not a demo.** Self-healing boot-persistent services, an inference
+  watchdog, an observability timer, preflight invariant checks, a 100/100 eval gate, a
+  loopback-only API by default, and documented rollback rungs for weights, image, and
+  config.
+- **A trust surface you can actually audit.** Official upstream vLLM image + a ~1.7K-line
+  patch + public weights — no prebuilt third-party image, no tokens, no kit-side
+  telemetry. Every change to the lane is evidence-gated (same-day A/B, acceptance,
+  garble, long-context needles) and written down, so you can check *why* each knob is
+  what it is — not just what it is.
 
 ## Reproducibility
 
-Everything a third party needs is **public, no authentication anywhere**:
+Everything you need is **public — no accounts, no tokens, anywhere**:
 
-- **Hardware:** 2× DGX Spark (GB10) + one QSFP cable between them + Docker — the only
-  non-negotiable inputs.
+- **Hardware:** 2× DGX Spark (GB10) + one QSFP cable between them + Docker. That's the
+  non-negotiable part.
 - **Weights:** [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
   is a public Hugging Face repo — no token required. (Preview rollback:
   [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark).)
-- **Serving image:** the official `vllm/vllm-openai:v0.26.0` (linux/arm64, public on Docker
-  Hub), the overlay patch in this repo, and two public git pins (b12x, FlashInfer). **No
-  prebuilt third-party image is required** — the trust surface is upstream vLLM plus a
-  ~1.5K-line reviewable patch, not a community-built artifact.
-- **Path:** clone → `bringup/00–09` (node prep, fabric verify, NCCL bench, image build +
-  distribute, weights, smoke) → `runtime/cluster.env` from the example → systemd units.
+- **Serving image:** the official `vllm/vllm-openai:v0.26.0` (linux/arm64, public on
+  Docker Hub), the overlay patch in this repo, and two public git pins (b12x, FlashInfer).
+  You never have to trust a community-built image — just upstream vLLM and a ~1.7K-line
+  patch you can read in one sitting.
+- **Path:** clone → `bringup/00–09` (node prep, fabric check, NCCL bench, image build +
+  distribute, weights, smoke test) → `runtime/cluster.env` from the example → systemd units.
 
-Caveats: every number here is an observation on one 2× pair (yours will vary), and the
-overlay is a delta against vLLM v0.26.0 — future upstream releases need it re-based (the
-mechanism, and the gates that prove a rebase healthy, are in [docs/10](docs/10-vllm-026-rebase.md)
-and the patch-kit README).
+Two honest caveats: every number here was measured on one 2× pair — yours will vary —
+and the overlay is a delta against vLLM v0.26.0, so future upstream releases need it
+re-based (the mechanism, and the gates that prove a rebase healthy, are in
+[docs/10](docs/10-vllm-026-rebase.md) and the patch-kit README).
 
 > ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
 > single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
@@ -74,10 +101,11 @@ and the patch-kit README).
               your clients (loopback only by default)
 ```
 
-One physical QSFP port enumerates as **two** PCIe "twin" netdevs (~100G each); using both
-twins on two subnets gets the full ~200G. NCCL runs RDMA over both; the control/bootstrap
-plane rides rail 1. TP=2 uses vLLM's native `mp` backend — **no Ray**. The **worker starts
-before the head**; the head rendezvouses to `MASTER_ADDR:MASTER_PORT` (= `HEAD_R1:25000`).
+One physical QSFP port shows up as **two** PCIe "twin" netdevs (~100G each) — using both,
+on separate subnets, gets the full ~200G. NCCL runs RDMA over both; the control plane
+rides rail 1. TP=2 uses vLLM's native `mp` backend, so there's **no Ray** anywhere. The
+**worker boots before the head**; the head then rendezvouses at `MASTER_ADDR:MASTER_PORT`
+(= `HEAD_R1:25000`).
 
 ---
 
@@ -162,7 +190,7 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MTP_NUM_TOKENS` | `2` | DSpark speculative draft length — the current sweet spot: **+3.8% single-stream decode vs `3`, concurrency-8 tie** (measured, see `docs/11`). `3` is a fine fallback; greedy `5` is unsafe (garble risk, see `docs/03`). |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | `72` | Keeps the spec-decode decode path graphed at concurrency. Derive as `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — `72 = 12 × (2+1) × 2`. See `docs/08`. |
 | `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | The supported CUDA-graph route for this model. **Keep `1`.** See `docs/08`. |
-| `TRITON_CACHE_DIR` | `/cache/huggingface/triton` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate. See `docs/07`. |
+| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-cand7` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). The `-cand7` root follows the source-patch cache-root rule (own roots per source-patch image; see `docs/13`). |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
 | `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
@@ -171,16 +199,16 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 
 The serve argv also pins `--attention-config '{"backend":"FLASHINFER_MLA_SPARSE_DSV4"}'`
 (the SM120 sparse-MLA route — explicit drift-guard; the default would resolve identically)
-and `--no-async-scheduling` (on 0.26 the async default would halve the *reported* KV pool
-via upstream #47728's doubled sliding-window reservation — measured throughput-neutral, so
-the pool comes back for free; see `docs/10`, `docs/11`).
+and `--no-async-scheduling` (on 0.26 the async default would shrink the *reported* KV pool
+by ~30% via upstream #47728's doubled sliding-window reservation — measured
+throughput-neutral, so the pool comes back for free; see `docs/10`, `docs/11`).
 
 ---
 
 ## Performance
 
-Measured on **one** 2× GB10 pair (`GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`).
-These are **observations, not guarantees** — yours will vary.
+All measured on our own 2× GB10 pair (`GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`).
+Treat these as **observations, not guarantees** — yours will vary.
 
 **DeepSeek-V4-Flash-0731 (current, 2026-07-31):**
 
@@ -192,9 +220,9 @@ These are **observations, not guarantees** — yours will vary.
 | Spec-decode acceptance (eval-mix / nprobe battery) | **0.796–0.823 / 0.875** (draft len 2, probabilistic) |
 | Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens** (10%/90% depths) + 200K; garble 1.00 |
 | KV cache pool | **2,948,751 tokens** (pinned) — unchanged vs preview; max concurrency @ 1M ctx **2.81×** |
-| Serving image | `vllm-dspark-runtime:v026-gx10-cand4-backports` — official `linux/arm64` `vllm/vllm-openai:v0.26.0` + the gx10 overlay + backports #50004/#49486, built by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) |
+| Serving image | `vllm-dspark-runtime:v026-gx10-cand7-backports` — official `linux/arm64` `vllm/vllm-openai:v0.26.0` + the gx10 overlay + backports #50004/#49486 + the cand7 increment #48957/#48047/#50330 (throughput-neutral at gate; buys the #50330 draft-quant correctness fix), built by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) — see [docs/13](docs/13-vllm-026-cand7.md) |
 | Dependencies | release lock (torch 2.11.0, cutlass-dsl 4.6.0, tvm-ffi 0.1.10, flashinfer-cubin 0.6.14) **except** FlashInfer `0.6.15-dev @0472b9b3` — proven load-bearing (the stock-0.6.14 build crashes on first decode traffic; see `docs/11`) |
-| Rollback | weights: flip `DSPARK_MODEL` back to `DeepSeek-V4-Flash-DSpark` (both checkpoints can stay resident) · image: `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane) |
+| Rollback | weights: flip `DSPARK_MODEL` back to `DeepSeek-V4-Flash-DSpark` + its `DSPARK_REVISION` pin (both checkpoints can stay resident) · image: `vllm-dspark-runtime:v026-gx10-cand4-backports` + its cache roots (first rung), then `vgx10-011-pr47356` (the 0.25.1 lane) |
 
 **0731 vs the best preview deploy** (same pair, same image, same-day A/B — preview numbers
 are the 2026-07-29 n=2 promotion re-measured pre-upgrade):
@@ -209,8 +237,8 @@ are the 2026-07-29 n=2 promotion re-measured pre-upgrade):
 | Garble / eval composite | 1.00 / 100 | 1.00 / 100 | unchanged |
 | KV pool (pinned) | 2,948,751 tok | 2,948,751 tok | unchanged |
 
-Net: throughput parity at concurrency, a single-digit single-stream dip, **better draft
-acceptance everywhere** — and the reason to upgrade is quality, not speed:
+The short version: same speed at concurrency, a small single-stream dip, **better draft
+acceptance everywhere** — and the real reason to upgrade is quality, not speed:
 
 ![DeepSeek-V4-Flash-0731 agentic benchmarks vs the preview, V4-Pro preview, GLM-5.2 and Opus-4.8 (source: DeepSeek model card)](docs/images/deepseek-v4-flash-0731-agentic-benchmarks.jpeg)
 
@@ -220,17 +248,19 @@ Cybergym 76.7 vs 38.7, Toolathlon-Verified 70.3 vs 49.7 — ahead of even the V4
 on every row (source: [DeepSeek-V4-Flash-0731 model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)).
 Upgrade evidence + the two offline-cache traps it surfaced: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 
-One 0731 behavior worth knowing: on prompts with **numeric length constraints** or very
-long single-shot asks it deliberates much longer inside thinking (word-counting and
-re-drafting drafts — coherent, not garble) and can exceed tight `max_tokens`. Irrelevant
-for tool-use/agentic traffic; give long-form asks room or chunk them. See `docs/12`.
+One 0731 quirk worth knowing: give it a prompt with a **numeric length constraint** or a
+very long single-shot ask, and it will word-count and re-draft inside its thinking —
+coherent, not garble — until the budget runs out. Tight `max_tokens` caps will truncate
+the answer. Tool-use and agentic traffic never notice; for long-form asks, leave room or
+chunk them. See `docs/12`.
 
 `eval-cluster.sh` prints the composite plus the throughput/latency probes in one run;
 `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes. Prior-lane figures
 (0.25.1, 0.21.x) are preserved in [docs/08](docs/08-optimization-and-vllm-025.md); the
 0.26.0 promotion evidence is in [docs/10](docs/10-vllm-026-rebase.md), the day-2
-qualification round in [docs/11](docs/11-v026-feature-qualification.md), and the 0731
-model upgrade in [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
+qualification round in [docs/11](docs/11-v026-feature-qualification.md), the 0731
+model upgrade in [docs/12](docs/12-dsv4-flash-0731-upgrade.md), and the cand7 backport
+round in [docs/13](docs/13-vllm-026-cand7.md).
 
 ---
 
@@ -250,6 +280,7 @@ model upgrade in [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 | [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md) | The **vLLM 0.26.0 promotion** (2026-07-28): the in-house rebase (official image + gx10 overlay + backports), the two guards it needs, the acceptance-regression hunt, evidence, and rollback. |
 | [docs/11-v026-feature-qualification.md](docs/11-v026-feature-qualification.md) | The **0.26.0 feature-qualification round** (2026-07-29): the 12-row release-feature audit (what's active, ineligible, or evidence-backed), the DSpark **n=2** K re-tune, the explicit backend pin, and the FlashInfer vendor-pin crash proof. |
 | [docs/12-dsv4-flash-0731-upgrade.md](docs/12-dsv4-flash-0731-upgrade.md) | The **DeepSeek-V4-Flash-0731 model upgrade** (2026-07-31): compatibility proof (byte-identical config/tokenizer, same footprint), the A/B gate numbers vs the preview, the two offline-cache traps (`refs/main`), and the 0731 long-form deliberation trait. |
+| [docs/13-vllm-026-cand7.md](docs/13-vllm-026-cand7.md) | The **cand7 backport round** (2026-08-10): the 836-commit post-0.26.0 survey, on-path pick selection (and the cand6 −10.7% rejection lesson), the throughput-neutral gate, and the source-patch cache-root rule. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---
