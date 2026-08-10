@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# Runtime layer for the vLLM 0.26.0 gx10-overlay lane (the cand4 production image).
+# Runtime layer for the vLLM 0.26.0 gx10-overlay lane (the cand7 production image).
 # Base: official linux/arm64 vllm/vllm-openai:v0.26.0 — supplies every 0.26 dependency
 # (flashinfer-python 0.6.14 + cubin, cutlass-dsl 4.6.0, quack>=0.4.0, tokenspeed-mla
 # 0.1.8, tilelang 0.1.9, torch 2.11.0). Its TORCH_CUDA_ARCH_LIST includes 12.0, which is
@@ -18,7 +18,7 @@ ARG FLASHINFER_COMMIT
 ARG B12X_COMMIT
 
 LABEL org.opencontainers.image.source="https://github.com/Reederey87/dgx-spark-2x-deepseek-v4-flash"
-LABEL org.opencontainers.image.description="vLLM 0.26.0 + gx10 GB10 overlay (cand4 lane)"
+LABEL org.opencontainers.image.description="vLLM 0.26.0 + gx10 GB10 overlay (cand7 lane)"
 
 # Do NOT re-pin apache-tvm-ffi / cuda-python — inherit the base image's (tvm-ffi 0.1.10).
 # Pinning 0.1.9 breaks cutlass-dsl 4.6.0's tvm_ffi_provider at first dummy run

@@ -43,7 +43,8 @@ Do **not** bake `0` into `cluster.env` for production.
 ## Related
 
 - The mismatch window that this guards is the same one the DSpark garble fix narrows
-  by using `MTP_NUM_TOKENS=3` + probabilistic draft (see `docs/03-model-and-features.md`).
+  via probabilistic drafting (originally `MTP_NUM_TOKENS=3`; **n=2** since the 2026-07-29
+  K re-tune — see `docs/03-model-and-features.md` and `docs/11-v026-feature-qualification.md`).
 - If crashes persist even with the clamp on, walk the OOM/stability ladder in
   `docs/05-troubleshooting.md` (drop `MAX_MODEL_LEN`, then `MAX_NUM_SEQS`, then
   `GPU_MEMORY_UTILIZATION`, then the speculative config).

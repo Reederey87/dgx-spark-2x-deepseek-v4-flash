@@ -137,7 +137,7 @@ trap notify_finalize EXIT
 
 # --- helpers: container age (seconds), 0 if unknown / not running ---
 container_age_secs() {
-  local started now
+  local started now started_epoch
   started="$(docker inspect vllm-dsv4 --format '{{.State.StartedAt}}' 2>/dev/null || true)"
   [ -n "$started" ] || { echo 0; return; }
   # StartedAt is RFC3339; use date -d (GNU) on Ubuntu DGX OS.

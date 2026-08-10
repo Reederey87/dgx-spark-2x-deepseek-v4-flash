@@ -18,9 +18,15 @@ done
 echo "ok: bash syntax (${#scripts[@]} scripts)"
 
 need 'DSPARK_VLLM_BASE_IMAGE=vllm/vllm-openai:v0.26.0@sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52' runtime/cluster.env.example
-need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v026-gx10-cand4-backports' runtime/cluster.env.example
+need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v026-gx10-cand7-backports' runtime/cluster.env.example
+need 'vllm-dspark-runtime:v026-gx10-cand7-backports' runtime/docker-compose.dspark.yml
 need 'gx10-overlay-026.patch' patches/vllm-026-rebase/README.md
 need 'zero-token-prefill-chunk guard' patches/vllm-026-rebase/README.md
+need 'cand7 production lane' patches/vllm-026-rebase/README.md
+# Source-patch image keeps its own compile-cache roots (the -cand7 set) — see docs/13.
+need 'vllm-cache-cand7' runtime/docker-compose.dspark.yml
+need 'triton-cache-cand7' runtime/cluster.env.example
+need 'tilelang-cand7' runtime/cluster.env.example
 need 'vLLM PR #47356' patches/vllm-pr47356-vgx10/README.md
 need 'kv_cache_memory_bytes' patches/vllm-pr47356-vgx10/cache-hash-exclude-kv-bytes.patch
 need 'GLOO_SOCKET_IFNAME=enp1s0f1np1' runtime/cluster.env.example
@@ -38,9 +44,9 @@ need '*/cached_ops/sampling' patches/flashinfer-pr3615/clear-sampling-cache.sh
 source runtime/cluster.env.example
 [ "$MASTER_ADDR" = "$HEAD_R1" ] || fail "MASTER_ADDR must equal HEAD_R1"
 [ -n "$GLOO_SOCKET_IFNAME" ] || fail "GLOO_SOCKET_IFNAME must be pinned"
-required_capture=$((MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1)))
+required_capture=$((MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1) * 2))
 [ "$MAX_CUDAGRAPH_CAPTURE_SIZE" -ge "$required_capture" ] \
-  || fail "MAX_CUDAGRAPH_CAPTURE_SIZE must be >= $required_capture"
+  || fail "MAX_CUDAGRAPH_CAPTURE_SIZE must be >= $required_capture (the vLLM 0.25+ capture-ceiling formula)"
 echo "ok: serve invariants"
 
 # Test-only Xid injection must work without cluster.env, write no files, and

@@ -1,5 +1,5 @@
 diff --git a/vllm/config/cache.py b/vllm/config/cache.py
-index a628e7d7c..636e85d3d 100644
+index a628e7d7cd..636e85d3d1 100644
 --- a/vllm/config/cache.py
 +++ b/vllm/config/cache.py
 @@ -25,6 +25,7 @@ CacheDType = Literal[
@@ -11,7 +11,7 @@ index a628e7d7c..636e85d3d 100644
      "turboquant_4bit_nc",
      "turboquant_k3v4_nc",
 diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
-index 8ba55a2ec..c8ec9ab37 100644
+index 8ba55a2ec9..c8ec9ab370 100644
 --- a/vllm/config/speculative.py
 +++ b/vllm/config/speculative.py
 @@ -1017,13 +1017,24 @@ class SpeculativeConfig:
@@ -47,7 +47,7 @@ index 8ba55a2ec..c8ec9ab37 100644
  
                  self.draft_tensor_parallel_size = (
 diff --git a/vllm/config/vllm.py b/vllm/config/vllm.py
-index 4b4a97f41..3ad11cce2 100644
+index 4b4a97f41b..3ad11cce28 100644
 --- a/vllm/config/vllm.py
 +++ b/vllm/config/vllm.py
 @@ -2282,11 +2282,7 @@ class VllmConfig:
@@ -64,7 +64,7 @@ index 4b4a97f41..3ad11cce2 100644
  
      @model_validator(mode="after")
 diff --git a/vllm/envs.py b/vllm/envs.py
-index 67d8fa5a2..be0a10dd0 100755
+index 67d8fa5a2c..be0a10dd09 100755
 --- a/vllm/envs.py
 +++ b/vllm/envs.py
 @@ -47,6 +47,10 @@ if TYPE_CHECKING:
@@ -97,7 +97,7 @@ index 67d8fa5a2..be0a10dd0 100755
      "VLLM_KEEP_ALIVE_ON_ENGINE_DEATH": lambda: bool(
 diff --git a/vllm/model_executor/layers/fused_moe/experts/b12x_mxfp4_moe.py b/vllm/model_executor/layers/fused_moe/experts/b12x_mxfp4_moe.py
 new file mode 100644
-index 000000000..c7ef1dbe3
+index 0000000000..c7ef1dbe3f
 --- /dev/null
 +++ b/vllm/model_executor/layers/fused_moe/experts/b12x_mxfp4_moe.py
 @@ -0,0 +1,877 @@
@@ -979,7 +979,7 @@ index 000000000..c7ef1dbe3
 +    def moe_sum(self, input: torch.Tensor, output: torch.Tensor) -> None:
 +        raise NotImplementedError("LoRA is not supported for B12xExperts")
 diff --git a/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py b/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py
-index 921e8f114..0cd1e4bcc 100644
+index 921e8f114d..0cd1e4bcc8 100644
 --- a/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py
 +++ b/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py
 @@ -104,6 +104,8 @@ class Mxfp4MoeBackend(Enum):
@@ -1060,7 +1060,7 @@ index 921e8f114..0cd1e4bcc 100644
          prepare_finalize,
          experts,
 diff --git a/vllm/models/deepseek_v4/attention.py b/vllm/models/deepseek_v4/attention.py
-index 5628a6d0d..512e8d927 100644
+index 5628a6d0d7..512e8d927a 100644
 --- a/vllm/models/deepseek_v4/attention.py
 +++ b/vllm/models/deepseek_v4/attention.py
 @@ -46,6 +46,7 @@ from vllm.model_executor.layers.quantization import QuantizationConfig
@@ -1177,8 +1177,88 @@ index 5628a6d0d..512e8d927 100644
          def wq_b_and_q_quant():
              # ReplicatedLinear returns (output, bias); bias is None.
              q, _ = self.wq_b(qr)
+diff --git a/vllm/models/deepseek_v4/compressor.py b/vllm/models/deepseek_v4/compressor.py
+index 13f327f6bc..590e748145 100644
+--- a/vllm/models/deepseek_v4/compressor.py
++++ b/vllm/models/deepseek_v4/compressor.py
+@@ -7,7 +7,7 @@ from typing import Any, ClassVar, cast
+ import torch
+ from torch import nn
+ 
+-from vllm.config import VllmConfig, get_current_vllm_config
++from vllm.config import CUDAGraphMode, VllmConfig, get_current_vllm_config
+ from vllm.forward_context import get_forward_context
+ from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
+ from vllm.model_executor.layers.layernorm import RMSNorm
+@@ -42,6 +42,19 @@ def _prefer_two_stage_compressor() -> bool:
+     return current_platform.is_rocm()
+ 
+ 
++def _get_c128_boundary(metadata: CommonAttentionMetadata) -> bool | None:
++    starts = metadata._num_computed_tokens_cpu
++    if starts is None:
++        return None
++
++    starts_list = starts.tolist()
++    query_start_loc = metadata.query_start_loc_cpu.tolist()
++    return any(
++        start % 128 + query_start_loc[i + 1] - query_start_loc[i] >= 128
++        for i, start in enumerate(starts_list)
++    )
++
++
+ class CompressorBackend(AttentionBackend):
+     def __init__(self):
+         super().__init__()
+@@ -90,6 +103,7 @@ class CompressorMetadata:
+ 
+     token_to_req_indices: torch.Tensor | None = None  # [num_tokens]
+     num_decode_tokens: int | None = None
++    c128_boundary: bool | None = None
+ 
+ 
+ class CompressorMetadataBuilder(AttentionMetadataBuilder):
+@@ -127,6 +141,11 @@ class CompressorMetadataBuilder(AttentionMetadataBuilder):
+             block_size=self.block_size,
+             token_to_req_indices=token_to_req_indices,
+             num_decode_tokens=num_decode_tokens,
++            c128_boundary=(
++                _get_c128_boundary(common_attn_metadata)
++                if self.block_size == 8
++                else None
++            ),
+         )
+ 
+ 
+@@ -317,7 +336,8 @@ class DeepseekCompressor(nn.Module):
+         )
+ 
+         # Get the metadata and handle dummy profiling run.
+-        attn_metadata = get_forward_context().attn_metadata
++        forward_context = get_forward_context()
++        attn_metadata = forward_context.attn_metadata
+         if not isinstance(attn_metadata, dict):
+             return
+ 
+@@ -359,6 +379,16 @@ class DeepseekCompressor(nn.Module):
+             pdl_kwargs=pdl_kwargs,
+         )
+ 
++        # full graph cannot branch on per-step CPU metadata after capture
++        if (
++            current_platform.is_cuda()
++            and self.head_dim == 512
++            and self.compress_ratio == 128
++            and forward_context.cudagraph_runtime_mode != CUDAGraphMode.FULL
++            and state_metadata.c128_boundary is False
++        ):
++            return
++
+         # Fused: compress → RMSNorm → RoPE → FP8 quant → KV cache write.
+         # RoPE requirements (kernel applies forward GPT-J style rotation):
+         # - is_neox_style=False (interleaved pairs, NOT split-half)
 diff --git a/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py b/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
-index 1848c1930..ca50abf0c 100644
+index 1848c1930d..a813574264 100644
 --- a/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
 +++ b/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
 @@ -8,6 +8,7 @@ import torch
@@ -1200,7 +1280,43 @@ index 1848c1930..ca50abf0c 100644
  _flashinfer_dsv4_workspace_by_device: dict[torch.device, torch.Tensor] = {}
  
  
-@@ -539,23 +543,66 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
+@@ -60,6 +64,20 @@ def _packed_block_span(pool: torch.Tensor) -> int:
+     return block_stride // token_stride
+ 
+ 
++# Sparse MLA h_q counts accepted natively (flashinfer>=0.6.14, #3545).
++_SPARSE_MLA_SUPPORTED_Q_HEADS = (8, 16, 32, 64, 128)
++
++
++def _pad_to_supported_q_heads(num_heads: int) -> int:
++    for supported in _SPARSE_MLA_SUPPORTED_Q_HEADS:
++        if num_heads <= supported:
++            return supported
++    raise ValueError(
++        f"DeepseekV4 FlashInfer MLA Sparse does not support {num_heads} heads "
++        "(sparse MLA kernel requires h_q in {8, 16, 32, 64, 128})."
++    )
++
++
+ class DeepseekV4FlashInferMLASparseBackend(DeepseekV4FlashMLABackend):
+     """FlashInfer backend using the DSv4 sparse metadata/cache layout.
+ 
+@@ -164,13 +182,7 @@ class DeepseekV4FlashInferMLAAttention(DeepseekV4Attention):
+ 
+     @classmethod
+     def get_padded_num_q_heads(cls, num_heads: int) -> int:
+-        # FP8 decode kernel only supports h_q = 64 or 128.
+-        if num_heads > 128:
+-            raise ValueError(
+-                f"DeepseekV4 FlashInfer MLA Sparse does not support {num_heads} heads "
+-                "(FP8 decode kernel requires h_q in {64, 128})."
+-            )
+-        return 64 if num_heads <= 64 else 128
++        return _pad_to_supported_q_heads(num_heads)
+ 
+     def _o_proj(self, o: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+         return deep_gemm_fp8_o_proj(
+@@ -539,25 +551,61 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
      def _as_sparse_cache(kv_cache: torch.Tensor) -> torch.Tensor:
          if kv_cache.dtype == torch.float8_e4m3fn:
              kv_cache = kv_cache.view(torch.uint8)
@@ -1236,7 +1352,17 @@ index 1848c1930..ca50abf0c 100644
 +                )
 +            kv_cache = kv_cache.view(-1, 64, 1, 584)
 +        return kv_cache
-+
+ 
+-    @classmethod
+-    def get_padded_num_q_heads(cls, num_heads: int) -> int:
+-        if num_heads <= 16:
+-            return 16
+-        if num_heads <= 32:
+-            return 32
+-        if num_heads <= 64:
+-            return 64
+-        if num_heads <= 128:
+-            return 128
 +    @staticmethod
 +    def _pad_decode_sparse_indices(indices: torch.Tensor) -> torch.Tensor:
 +        """Pad DSpark's non-causal top-k to a native SM120 kernel width."""
@@ -1251,35 +1377,23 @@ index 1848c1930..ca50abf0c 100644
 +                return torch.nn.functional.pad(
 +                    indices, (0, supported_topk - topk), value=-1
 +                )
-+        raise ValueError(
+         raise ValueError(
+-            f"DeepseekV4 FlashInfer MLA Sparse does not support {num_heads} heads "
+-            "(SM120 kernel requires h_q in {16, 32, 64, 128})."
 +            "SM120 DSv4 sparse decode supports at most 1024 SWA indices, "
 +            f"got {topk}."
-+        )
- 
-     @classmethod
-     def get_padded_num_q_heads(cls, num_heads: int) -> int:
--        if num_heads <= 16:
--            return 16
--        if num_heads <= 32:
--            return 32
--        if num_heads <= 64:
--            return 64
--        if num_heads <= 128:
--            return 128
-+        # FlashInfer's native SM120/SM121 DSv4 sparse backend supports these
-+        # widths directly. TP2 uses 32 heads per rank, so avoid needless 64-head
-+        # padding while retaining the general next-supported-width behavior.
-+        for supported_heads in (8, 16, 32, 64, 128):
-+            if num_heads <= supported_heads:
-+                return supported_heads
-         raise ValueError(
-             f"DeepseekV4 FlashInfer MLA Sparse does not support {num_heads} heads "
--            "(SM120 kernel requires h_q in {16, 32, 64, 128})."
-+            "(SM120/SM121 kernel supports h_q in {8, 16, 32, 64, 128})."
          )
  
++    @classmethod
++    def get_padded_num_q_heads(cls, num_heads: int) -> int:
++        # TP2 uses 32 heads per rank; the helper's ladder avoids needless
++        # 64-head padding (the overlay already carried this pre-#48047).
++        return _pad_to_supported_q_heads(num_heads)
++
      def _o_proj(self, o: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
-@@ -759,6 +806,7 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
+         return deep_gemm_fp8_o_proj(
+             o,
+@@ -759,6 +807,7 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
          swa_lens = swa_metadata.decode_swa_lens
          assert swa_indices is not None
          assert swa_lens is not None
@@ -1287,7 +1401,7 @@ index 1848c1930..ca50abf0c 100644
          q = self._prepare_query(q, output)
          swa_cache = self._as_sparse_cache(self.swa_cache_layer.kv_cache)
          extra_cache = self._as_sparse_cache(kv_cache) if kv_cache is not None else None
-@@ -879,6 +927,19 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
+@@ -879,6 +928,19 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
              )
  
              q_chunk = q[query_start:query_end]
@@ -1308,7 +1422,7 @@ index 1848c1930..ca50abf0c 100644
              swa_lens_chunk = swa_metadata.prefill_swa_lens[query_start:query_end]
              if extra_kv_paged is not None and extra_sparse_indices_chunk is None:
 diff --git a/vllm/models/deepseek_v4/sparse_mla.py b/vllm/models/deepseek_v4/sparse_mla.py
-index 4523d1875..7082f1acf 100644
+index 4523d1875e..7082f1acf9 100644
 --- a/vllm/models/deepseek_v4/sparse_mla.py
 +++ b/vllm/models/deepseek_v4/sparse_mla.py
 @@ -46,6 +46,7 @@ class DeepseekV4FlashMLABackend(AttentionBackend):
@@ -1389,7 +1503,7 @@ index 4523d1875..7082f1acf 100644
          compress_ratio,
          max_compressed_tokens,
 diff --git a/vllm/utils/torch_utils.py b/vllm/utils/torch_utils.py
-index 1472024c2..097c56786 100644
+index 1472024c2b..097c567860 100644
 --- a/vllm/utils/torch_utils.py
 +++ b/vllm/utils/torch_utils.py
 @@ -49,6 +49,7 @@ STR_DTYPE_TO_TORCH_DTYPE = {
@@ -1410,7 +1524,7 @@ index 1472024c2..097c56786 100644
  
  
 diff --git a/vllm/v1/attention/backends/mla/flashmla_sparse.py b/vllm/v1/attention/backends/mla/flashmla_sparse.py
-index e8be7ad5b..454915ebf 100644
+index e8be7ad5bb..454915ebf2 100644
 --- a/vllm/v1/attention/backends/mla/flashmla_sparse.py
 +++ b/vllm/v1/attention/backends/mla/flashmla_sparse.py
 @@ -91,6 +91,7 @@ class FlashMLASparseBackend(AttentionBackend):
@@ -1439,7 +1553,7 @@ index e8be7ad5b..454915ebf 100644
              assert vllm_config is not None and vllm_config.model_config is not None
              prefill_workspace_size = get_prefill_workspace_size(
 diff --git a/vllm/v1/attention/backends/mla/sparse_swa.py b/vllm/v1/attention/backends/mla/sparse_swa.py
-index 9faf56f63..1c88312df 100644
+index 9faf56f639..1c88312df1 100644
 --- a/vllm/v1/attention/backends/mla/sparse_swa.py
 +++ b/vllm/v1/attention/backends/mla/sparse_swa.py
 @@ -80,9 +80,13 @@ class DeepseekV4SWACache(torch.nn.Module, AttentionLayerBase):
@@ -1483,7 +1597,7 @@ index 9faf56f63..1c88312df 100644
              # head_size passed in is the semantic head_dim (512).
              return (num_blocks, block_size, 584)
 diff --git a/vllm/v1/kv_cache_interface.py b/vllm/v1/kv_cache_interface.py
-index 7a44d4e1d..1b3f5de2a 100644
+index 7a44d4e1d2..1b3f5de2ad 100644
 --- a/vllm/v1/kv_cache_interface.py
 +++ b/vllm/v1/kv_cache_interface.py
 @@ -67,7 +67,7 @@ def get_kv_quant_mode(kv_cache_dtype: str) -> KVQuantMode:
@@ -1522,3 +1636,25 @@ index 7a44d4e1d..1b3f5de2a 100644
              # DeepseekV4 FlashMLA: 448B NoPE + 128B RoPE + 8B fp8 scale = 584B
              # per token. FlashInfer's contiguous bf16/fp8 cache falls through to
              # the element-size formula below.
+diff --git a/vllm/v1/worker/gpu/spec_decode/dspark/utils.py b/vllm/v1/worker/gpu/spec_decode/dspark/utils.py
+index 9ea2ff0f73..13c7644315 100644
+--- a/vllm/v1/worker/gpu/spec_decode/dspark/utils.py
++++ b/vllm/v1/worker/gpu/spec_decode/dspark/utils.py
+@@ -19,6 +19,7 @@ def load_dspark_model(target_model: nn.Module, vllm_config: VllmConfig) -> nn.Mo
+ 
+     from vllm.compilation.backends import set_model_tag
+     from vllm.model_executor.models.qwen3_dflash import dflash_has_any_non_causal
++    from vllm.model_executor.models.utils import get_draft_quant_config
+ 
+     draft_vllm_config = replace(
+         vllm_config,
+@@ -36,6 +37,9 @@ def load_dspark_model(target_model: nn.Module, vllm_config: VllmConfig) -> nn.Mo
+             else vllm_config.cache_config
+         ),
+     )
++    # VllmConfig post-init restores the target's quant config because the target
++    # config is retained for DSpark's target-layer metadata, so we must override it.
++    draft_vllm_config.quant_config = get_draft_quant_config(vllm_config)
+ 
+     with set_model_tag("dspark_head"):
+         draft_model = get_model(

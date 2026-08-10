@@ -1,5 +1,11 @@
 # Upstream backport candidates for `anemll/dspark-vllm-gx10` — 2026-07-17
 
+> **Superseded as a "default image" record** — the lane this page audits was the 0.25.1
+> image of 2026-07-17. The default moved to vLLM 0.26.0 on 2026-07-28 (see
+> [10-vllm-026-rebase.md](10-vllm-026-rebase.md)) and to the cand7 image on 2026-08-10
+> (see [13-vllm-026-cand7.md](13-vllm-026-cand7.md)); the backports below either landed or
+> were re-evaluated there. Kept as the evidence record of the 0.25.1-era maintainer ask.
+
 **What this is.** An evidence-backed list of post-v0.25.1 upstream vLLM fixes that this kit's
 default image (`vllm-dspark-runtime:vgx10-cand1-pr47356`, vLLM `0.25.2.dev0+g752a3a504.d20260714`,
 pinned at upstream tag `v0.25.1` = commit `752a3a50`) does **not** carry — verified by grepping

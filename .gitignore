@@ -8,6 +8,15 @@ cluster.env
 # Optional Telegram alert credentials for metrics-watch — copy from notify.env.example.
 notify.env
 
+# Any other secrets-bearing env file (belt and braces — the *.example templates end
+# in .example and stay committable).
+.env
+*.env
+
+# Transient build context of patches/vllm-026-rebase/build-patched-image.sh (a full
+# extracted+patched vLLM tree — must never be committed; NOTICE policy).
+.overlay-build-vllm
+
 # Runtime state written on the head node by metrics-watch / warmup.
 .metrics-watch*
 logs/

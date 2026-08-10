@@ -2,8 +2,8 @@
 
 This is the accuracy-critical reference for **what the model stack actually does** and
 **where each advanced feature is turned on** in this repo. Every knob named below is
-quoted from [`docker-compose.dspark.yml`](../docker-compose.dspark.yml) and
-[`cluster.env.example`](../cluster.env.example) — open those alongside this page and you
+quoted from [`docker-compose.dspark.yml`](../runtime/docker-compose.dspark.yml) and
+[`cluster.env.example`](../runtime/cluster.env.example) — open those alongside this page and you
 can trace every claim to a line.
 
 ## What this serves
@@ -46,7 +46,8 @@ The serving substrate — the things every feature below sits on top of — is:
 
 All four named features trace to the community author **"Keys" (GitHub
 [`drowzeys`](https://github.com/drowzeys))** and to the **tonyd2wild** Tier-B serving recipe
-this repo pins (`RECIPE_SHA` in `cluster.env` → the `vllm-dspark-runtime:dspark-nvfp4-stage-c`
+this repo pins (`RECIPE_SHA` in the commented-out 0.21.x rollback block of
+`runtime/cluster.env.example` → the `vllm-dspark-runtime:dspark-nvfp4-stage-c`
 image), which in turn wraps **aidendle94**'s compiled GB10 (`sm_121a`) kernels. **They are
 already baked into the stage-c image.** This repo's job is to *enable* them via env/flags and
 *document* them — not to reimplement them.
@@ -265,9 +266,12 @@ tradeoff, not a free upgrade — if you're chasing decode throughput, this is a 
 
 ## Provenance, alternatives, and upstream convergence
 
-This repo **pins the currently-proven tonyd2wild recipe + `dspark-nvfp4-stage-c-fi3615` image on
-purpose** (see [`NOTICE`](../NOTICE)). Known alternatives that this kit does **not**
-ship:
+**Historical note (0.21.x era):** this repo originally pinned the tonyd2wild recipe +
+`dspark-nvfp4-stage-c-fi3615` image as the proven default. That lane was superseded by the
+0.25.1 lane on 2026-07-15 ([08](08-optimization-and-vllm-025.md)) and then by vLLM 0.26.0
+([10](10-vllm-026-rebase.md)) — the current image is `v026-gx10-cand7-backports`
+([13](13-vllm-026-cand7.md)); the 0.21.x pins survive only as a commented rollback block in
+`runtime/cluster.env.example`. Known alternatives that this kit does **not** ship:
 
 - **drowzeys' vLLM 0.24.0 port** — `git-apply` patches rather than a prebuilt image.
 - **r0b0tlab's native-DeepGEMM benchmark image** — a different prebuilt.
@@ -280,6 +284,6 @@ a moving target:
   FP8-KV path).
 
 vLLM 0.25.0 shipped official DSpark support, but the measured two-node rebase was **NOT-READY**:
-quality gates passed and C1 improved 4.3%, while the real C8 workload regressed 9.2%. Keep the
-proven image as the default until a point release or a dedicated profile identifies and closes
-that concurrent-batching gap. See [08](08-optimization-and-vllm-025.md) for the full ledger.
+quality gates passed and C1 improved 4.3%, while the real C8 workload regressed 9.2% — a
+verdict that held **until the 0.25.1 port shipped 2026-07-15** ([08](08-optimization-and-vllm-025.md));
+the lane has since moved to 0.26.0 ([10](10-vllm-026-rebase.md)).

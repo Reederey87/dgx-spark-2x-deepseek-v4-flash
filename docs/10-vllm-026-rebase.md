@@ -1,16 +1,22 @@
 # The vLLM 0.26.0 rebase and promotion (2026-07-28)
 
 This page documents the current default lane: **vLLM 0.26.0**, promoted 2026-07-28, replacing
-the 0.25.1 lane ([docs/08](docs/08-optimization-and-vllm-025.md), now the rollback). Numbers
+the 0.25.1 lane ([docs/08](08-optimization-and-vllm-025.md), now the rollback). Numbers
 are directional measurements from one 2× DGX Spark pair; re-run the gates on your own hardware.
+
+> **2026-08-10 update:** the lane's image moved to **`v026-gx10-cand7-backports`** (cand4 +
+> backports #48957/#48047/#50330, own `-cand7` cache roots) after a same-day gate measured it
+> throughput-**neutral** — it buys the #50330 draft-quant correctness fix at zero measured
+> cost. Everything on this page (evidence, guards, rollback mechanics) stands; cand4 is now
+> the first image rollback rung. Full record: [docs/13](13-vllm-026-cand7.md).
 
 ## Lane definition
 
 | Component | Pin |
 |---|---|
-| Serving image | `vllm-dspark-runtime:v026-gx10-cand4-backports` (built by [patches/vllm-026-rebase/](../patches/vllm-026-rebase/)) |
+| Serving image | `vllm-dspark-runtime:v026-gx10-cand7-backports` (built by [patches/vllm-026-rebase/](../patches/vllm-026-rebase/)) |
 | Base image | `vllm/vllm-openai:v0.26.0` (official **linux/arm64**, digest-pinned `@sha256:ffb2d59b…abf52`) |
-| Overlay | `gx10-overlay-026.patch` — 13 files: the `dspark-vllm-gx10` GB10 overlay (Anemll, see [NOTICE](../NOTICE)) cherry-picked onto v0.26.0 with **zero conflicts**, plus two guards and two backports (below) |
+| Overlay | `gx10-overlay-026.patch` — 15 files: the `dspark-vllm-gx10` GB10 overlay (Anemll, see [NOTICE](../NOTICE)) cherry-picked onto v0.26.0 with **zero conflicts**, plus two guards and five backports (below + [docs/13](13-vllm-026-cand7.md)) |
 | Extra pins | FlashInfer `0.6.15-dev` @ `0472b9b3…`, b12x `0.15.3` @ `7dc6fb8f…` (unchanged from the 0.25.1 lane; `FLASHINFER_DISABLE_VERSION_CHECK=1`) |
 | Serving config | **unchanged** from the 0.25.1 lane except one flag: 1M ctx, `nvfp4_ds_mla`, DSpark n=3 probabilistic, util 0.85, `KV_CACHE_MEMORY_BYTES=21316272128`, **`--no-async-scheduling`** (see "Open items" — restores the reported KV pool at zero measured cost). **2026-07-29 update:** DSpark **n=2** + explicit `--attention-config '{"backend":"FLASHINFER_MLA_SPARSE_DSV4"}'` — see [11](11-v026-feature-qualification.md) |
 
@@ -53,6 +59,10 @@ code asserts fp8-family KV for target *and* drafter (`_resolve_dsv4_kv_cache_dty
 
 ## Evidence (same-day A/B vs the 0.25.1 lane)
 
+_Measured on the cand4 image. The cand7 increment re-gated throughput-neutral on 2026-08-10
+(C1/C8 Welch95 CIs both cross zero, acceptance flat, KV pool byte-identical), so every number
+below still stands — see [docs/13](13-vllm-026-cand7.md)._
+
 | Metric | 0.25.1 lane | **0.26.0 lane (cand4)** |
 |---|---|---|
 | Composite eval | 100/100 | **100/100 ×2** |
@@ -65,11 +75,14 @@ code asserts fp8-family KV for target *and* drafter (`_resolve_dsv4_kv_cache_dty
 
 ## Rollback
 
-One config swap in `runtime/cluster.env` (see the rollback block in
-`runtime/cluster.env.example`): point `DSPARK_VLLM_IMAGE` back at
+First rung (0.26.0, same base): point `DSPARK_VLLM_IMAGE` back at
+`vllm-dspark-runtime:v026-gx10-cand4-backports` **and** the three cache roots
+(`VLLM_CACHE_ROOT` / `TRITON_CACHE_DIR` / `TILELANG_CACHE_DIR`) back at the pre-cand7 paths —
+a source-patch image must not share compile-cache roots across variants (see
+[docs/13](13-vllm-026-cand7.md)). Deeper rollback: point `DSPARK_VLLM_IMAGE` at
 `vllm-dspark-runtime:vgx10-011-pr47356` (the 0.25.1 lane image, kept on both nodes) and
 restart the pair. The 0.25.1 lane's build kit (`patches/vllm-pr47356-vgx10/`) and ledger
-([docs/08](docs/08-optimization-and-vllm-025.md)) are preserved.
+([docs/08](08-optimization-and-vllm-025.md)) are preserved.
 
 ## Open items
 

@@ -5,7 +5,7 @@
 # This is the pre-2026-07-15 build path, kept intact for rollback: the pinned
 # tonyd2wild recipe (stage-c) base + the FlashInfer PR #3615 sampler-hang fix
 # as a thin final layer. It is NOT the current default — bringup/05-build-image.sh
-# builds the dspark-vllm-gx10 (vLLM 0.25.1) lane. See docs/08.
+# builds the vLLM 0.26.0 gx10-overlay (cand7) lane. See docs/08, docs/10, docs/13.
 #
 # To use this lane, first swap cluster.env section 4 to the ROLLBACK block
 # (uncomment the prior 0.21.x pins there), then run this script instead of 05.

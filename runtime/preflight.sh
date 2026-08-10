@@ -73,9 +73,9 @@ check_serve_invariants() {
     # validated decimal input (including values such as 08) before using it.
     printf -v "$v" '%d' "$((10#$value))"
   done
-  required_capture=$(( MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1) ))
+  required_capture=$(( MAX_NUM_SEQS * (MTP_NUM_TOKENS + 1) * 2 ))
   if [ "$MAX_CUDAGRAPH_CAPTURE_SIZE" -lt "$required_capture" ]; then
-    echo "preflight WARN: MAX_CUDAGRAPH_CAPTURE_SIZE=$MAX_CUDAGRAPH_CAPTURE_SIZE is below MAX_NUM_SEQS*(MTP_NUM_TOKENS+1)=$required_capture; high-concurrency spec decode may fall back to eager." >&2
+    echo "preflight WARN: MAX_CUDAGRAPH_CAPTURE_SIZE=$MAX_CUDAGRAPH_CAPTURE_SIZE is below MAX_NUM_SEQS*(MTP_NUM_TOKENS+1)*2=$required_capture (vLLM 0.25+'s capture-ceiling formula); high-concurrency spec decode may fall back to eager." >&2
   fi
   echo "preflight ok: distributed invariants (Gloo=$GLOO_SOCKET_IFNAME, capture=$MAX_CUDAGRAPH_CAPTURE_SIZE)"
 }
