@@ -43,6 +43,11 @@ the wrong GID, set `NCCL_IB_GID_INDEX` to the RoCEv2 IPv4 index (**often 3**). L
 to let NCCL auto-select — the compose unsets an empty value so it never forces a bad index.
 `01-verify-fabric.sh` prints the RoCEv2 IPv4 GID candidates per device so you know what to pin.
 
+> **Multi-HCA rule:** when `NCCL_IB_HCA` is a comma list (this kit's dual-rail default),
+> leave `NCCL_IB_GID_INDEX` **empty** — NCCL then resolves the GID per HCA. A single global
+> GID index is a single-HCA-only spelling; pinning one against a two-HCA list forces the same
+> endpoint index on both rails. The kit's empty default is already the correct spelling here.
+
 ## Verify the fabric — `01-verify-fabric.sh`
 
 Run from the control host after `00-node-prep.sh` on both nodes. It checks, on each node and
