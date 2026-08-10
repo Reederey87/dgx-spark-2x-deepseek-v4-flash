@@ -45,7 +45,7 @@ DSPARK_REASONING=on            # on (default) = thinking; off = non-think greedy
 DSPARK_REASONING_EFFORT=high   # high | max
 ```
 
-At `on` the compose command serves `--default-chat-template-kwargs '{"thinking":true,"reasoning_effort":"high"}'`
+At `on` the compose command serves `--default-chat-template-kwargs '{"thinking":true,"reasoning_effort":"high","drop_thinking":false}'`
 and flips `--override-generation-config` to the reasoning sampling profile (below). Every request reasons
 unless it opts out per-request with `{"thinking": false}`. Set `off` (then restart) for a non-think server.
 
@@ -59,6 +59,9 @@ garble gate is the accept criterion.
 
 `reasoning_effort`: `high` (default) or `max`. `max` prepends a maximize-depth instruction and needs
 `--max-model-len >= 393216` (the 1M default clears it) — reserve it for low-concurrency calls.
+⚠ **The wrapper's effort mapping is coarse** (vendored 0.26 `vllm/tokenizers/deepseek_v4.py`): only
+`none` / `max` / `xhigh` are special-cased — **any other string, including `low` and `medium`,
+silently runs as `high`.** A `low` ask is not an error, it just isn't low.
 
 ## The `max_tokens` trap
 
@@ -82,6 +85,24 @@ a tool round-trip with thinking on and no reasoning echoed back returns `200`. S
 hard-break here. They only lose prior-turn chain-of-thought on replay, because vLLM's OpenAI-compat
 endpoint does not consume incoming `reasoning_content`. Clients that want interleaved thinking preserved
 across tool turns should re-embed the prior `<think>…</think>` inline in `content` on replay.
+
+## Prior-turn CoT on replay — `drop_thinking` (this kit ships `false`)
+
+When prior thinking **is** present in the conversation history, two pieces of the vendored
+0.26 tokenizer/encoder decide whether it survives into the next rendered prompt:
+
+1. **Tool turns always keep it.** In the encoder (`vllm/tokenizers/deepseek_v4_encoding.py`),
+   if any message in the request has tools defined, `drop_thinking` is **auto-disabled** —
+   tool-call turns preserve prior chain-of-thought regardless of the configured value.
+2. **Non-tool turns are governed by `drop_thinking` (upstream default `True`).** Left at the
+   default, a multi-turn conversation *without* tools renders each new prompt with earlier
+   turns' thinking stripped — the model re-reasons from scratch every turn.
+
+This kit bakes `"drop_thinking":false` into the `DSPARK_REASONING=on` server default, so
+prior-turn CoT is preserved on **every** multi-turn conversation, tool or not. The cost is
+longer prompts on long non-tool sessions; prefix caching still applies, so re-rendering an
+unchanged history is mostly cache hits. A client that deliberately wants stateless turns can
+restore the upstream behavior per request with `chat_template_kwargs: {"drop_thinking": true}`.
 
 ## How it works (for the curious)
 

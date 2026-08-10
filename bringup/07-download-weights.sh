@@ -39,6 +39,26 @@ if find "$model_dir/blobs" -name '*.safetensors.incomplete' -print -quit | grep 
   echo "FAIL: incomplete safetensors blobs remain — rerun download" >&2
   exit 1
 fi
+# Shard-level completeness: refs/main + config.json can both be present while an
+# individual shard never got linked into the snapshot (an interrupted download that
+# left no .incomplete marker). Walk the index's weight_map and assert every shard exists.
+index="$(find "$model_dir/snapshots" -name model.safetensors.index.json -print -quit)"
+[ -n "$index" ] || { echo "FAIL: model.safetensors.index.json missing under $model_dir/snapshots — download is incomplete" >&2; exit 1; }
+missing_shards="$(python3 - "$index" <<'PY'
+import json, os, sys
+index_path = sys.argv[1]
+snap_dir = os.path.dirname(index_path)
+weight_map = json.load(open(index_path, encoding="utf-8"))["weight_map"]
+missing = sorted({shard for shard in weight_map.values()
+                  if not os.path.isfile(os.path.join(snap_dir, shard))})
+for shard in missing:
+    print("missing shard:", shard, file=sys.stderr)
+print(len(missing))
+PY
+)"
+echo "missing_shards=$missing_shards"
+[ "$missing_shards" = "0" ] || { echo "FAIL: $missing_shards safetensors shards missing from the snapshot — rerun download" >&2; exit 1; }
+echo "ok: all safetensors shards present"
 du -sh "$model_dir"
 echo "ok: weights present"
 
