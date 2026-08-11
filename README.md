@@ -224,17 +224,6 @@ Treat these as **observations, not guarantees** — yours will vary.
 | Dependencies | release lock (torch 2.11.0, cutlass-dsl 4.6.0, tvm-ffi 0.1.10, flashinfer-cubin 0.6.14) **except** FlashInfer `0.6.15-dev @0472b9b3` — proven load-bearing (the stock-0.6.14 build crashes on first decode traffic; see `docs/11`) |
 | Rollback | weights: flip `DSPARK_MODEL` back to `DeepSeek-V4-Flash-DSpark` + its `DSPARK_REVISION` pin (both checkpoints can stay resident) · image: `vllm-dspark-runtime:v026-gx10-cand4-backports` + its cache roots (first rung), then `vgx10-011-pr47356` (the 0.25.1 lane) |
 
-> ⚠️ **These are short-context numbers.** Every C1/C8 throughput figure above was measured
-> at prompts of a few K tokens; **decode rate at 500K+ context is unmeasured on this
-> lane.** The open datapoint that motivated measuring it is
-> [MiaAI-Lab issue #22](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/22):
-> on a different lane (Anemll 0.25.2, MTP-5, third-party weights, uncontrolled A/B) a
-> reporter saw `nvfp4_ds_mla` decode collapse to ~1 tok/s at ~630K context vs 17.3 tok/s
-> on `fp8_ds_mla` — mechanism unclear, but nobody has the measurement here either.
-> `runtime/bench-decode-depth.py` closes that blind spot (see
-> [docs/07](docs/07-observability-and-warmup.md)); `fp8_ds_mla` is the diagnostic perf arm
-> at depth.
-
 **0731 vs the best preview deploy** (same pair, same image, same-day A/B — preview numbers
 are the 2026-07-29 n=2 promotion re-measured pre-upgrade):
 
@@ -285,14 +274,14 @@ round in [docs/13](docs/13-vllm-026-cand7.md).
 | [docs/04-serving-and-systemd.md](docs/04-serving-and-systemd.md) | The serve profile, TP=2 rendezvous, systemd user units, preflight, and the inference watchdog. |
 | [docs/05-troubleshooting.md](docs/05-troubleshooting.md) | OOM ladder, NCCL bandwidth, garbled output, restart deadlocks, and the security/listener audit. |
 | [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
-| [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, per-request cached-token telemetry, Telegram alerts, readiness warm-up, the eval composite score, and the decode-at-depth bench (`runtime/bench-decode-depth.py`). |
+| [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, Telegram alerts, readiness warm-up, and the eval composite score. |
 | [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The A/B decision ledger and the **vLLM 0.25.1 promotion** (2026-07-15): the two-candidate distinction, config deltas, hardening pass, residual gaps, and the preserved prior 0.21.x lane + rollback. |
 | [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask, incl. the +1.8% TPOT DeepSeek-V4 perf commit. |
 | [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md) | The **vLLM 0.26.0 promotion** (2026-07-28): the in-house rebase (official image + gx10 overlay + backports), the two guards it needs, the acceptance-regression hunt, evidence, and rollback. |
 | [docs/11-v026-feature-qualification.md](docs/11-v026-feature-qualification.md) | The **0.26.0 feature-qualification round** (2026-07-29): the 12-row release-feature audit (what's active, ineligible, or evidence-backed), the DSpark **n=2** K re-tune, the explicit backend pin, and the FlashInfer vendor-pin crash proof. |
 | [docs/12-dsv4-flash-0731-upgrade.md](docs/12-dsv4-flash-0731-upgrade.md) | The **DeepSeek-V4-Flash-0731 model upgrade** (2026-07-31): compatibility proof (byte-identical config/tokenizer, same footprint), the A/B gate numbers vs the preview, the two offline-cache traps (`refs/main`), and the 0731 long-form deliberation trait. |
 | [docs/13-vllm-026-cand7.md](docs/13-vllm-026-cand7.md) | The **cand7 backport round** (2026-08-10): the 836-commit post-0.26.0 survey, on-path pick selection (and the cand6 −10.7% rejection lesson), the throughput-neutral gate, and the source-patch cache-root rule. |
-| [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard — **legacy no-op on the 0.26 lane** (zero readers in the installed package; the overlay handles the crash class itself), kept for 0.25.1-rollback compatibility. |
+| [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard. |
 
 ---
 

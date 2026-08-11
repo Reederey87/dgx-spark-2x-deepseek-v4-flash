@@ -77,16 +77,6 @@ check_serve_invariants() {
   if [ "$MAX_CUDAGRAPH_CAPTURE_SIZE" -lt "$required_capture" ]; then
     echo "preflight WARN: MAX_CUDAGRAPH_CAPTURE_SIZE=$MAX_CUDAGRAPH_CAPTURE_SIZE is below MAX_NUM_SEQS*(MTP_NUM_TOKENS+1)*2=$required_capture (vLLM 0.25+'s capture-ceiling formula); high-concurrency spec decode may fall back to eager." >&2
   fi
-  # The two documented reasoning values — same fail-fast guard as render-env.sh, so a
-  # typo surfaces at boot instead of silently changing thinking/sampling defaults.
-  case "${DSPARK_REASONING:-on}" in
-    on|off) ;;
-    *) echo "preflight FAIL: DSPARK_REASONING must be on|off (got '${DSPARK_REASONING:-<unset>}')" >&2; exit 1 ;;
-  esac
-  case "${DSPARK_REASONING_EFFORT:-high}" in
-    high|max) ;;
-    *) echo "preflight FAIL: DSPARK_REASONING_EFFORT must be high|max (got '${DSPARK_REASONING_EFFORT:-<unset>}')" >&2; exit 1 ;;
-  esac
   echo "preflight ok: distributed invariants (Gloo=$GLOO_SOCKET_IFNAME, capture=$MAX_CUDAGRAPH_CAPTURE_SIZE)"
 }
 

@@ -64,10 +64,6 @@ Cold-run artifacts worth recording: the first eval rep on **fresh cache roots** 
 98.0 and the first C8 batch 79.26 — both warmup effects (cold prefix cache / fresh
 compile roots), gone on warm re-runs. **Never gate on a cold boot.**
 
-One blind spot this gate does not cover: every C1/C8 number above is short-context.
-Decode rate at 500K+ is unmeasured on this lane — see the caveat in the
-[README](../README.md#performance) and `runtime/bench-decode-depth.py`.
-
 ## The cache-root rule (why cand7 has its own roots)
 
 vLLM's compile cache (`VllmConfig.compute_hash()`) keys on version + config — **never on
@@ -80,36 +76,3 @@ issue vllm-project/vllm#49927). Rule: **every source-patch image variant gets it
 `runtime/docker-compose.dspark.yml` and `runtime/cluster.env.example`. Rolling back to
 cand4 means pointing all three back — see the rollback block in
 `runtime/cluster.env.example`.
-
-## Re-auditing VLLM_* envs after an image bump
-
-An env var that had a consumer in one image can silently become a no-op in the next (the
-`VLLM_DSPARK_*` family and `DSPARK_SLOT_CLAMP` both went this way — the compose keeps a
-graveyard comment for the former). After any image bump, re-audit what the installed
-package actually reads:
-
-```bash
-docker exec vllm-dsv4 python3 -c "import vllm.envs as e; print('\n'.join(sorted(e.environment_variables)))"
-```
-
-Diff that list against the `VLLM_*` keys in the compose. A compose key missing from the
-package's registry is a warn-only no-op: vLLM logs it as an unknown environment variable
-at boot and otherwise ignores it. Keeping the compose's known-dead set out of the
-environment (or clearly commented) is what keeps that boot-log unknown-var count a
-meaningful drift signal.
-
-## CUTE_DSL_ARCH — checked, N/A on this lane (2026-08-10)
-
-Community advice (MiaAI's #7) sets `CUTE_DSL_ARCH=sm_121a` for a claimed +30% — that
-measurement came from their **0.25 Anemll image's W4A16 MoE path**, a different lane.
-Audited against the cand7 image before adopting:
-
-- The actual consumers in the installed package are `quack/cache/async_compile.py` and
-  `nvidia_cutlass_dsl` internals only; the two vllm files that name the variable mention
-  it solely in a docstring.
-- Boot logs show `Skipping CuTeDSL warmup because no compile units were requested`, and
-  no quack/cute compile-cache dirs exist on either node — cute-dsl is **not on the DSv4
-  0.26 serving path**, so the env would be inert here.
-
-Not adopted. If a future image moves a serving-path kernel onto cute-dsl, re-run the
-audit above (consumers first, claims second).

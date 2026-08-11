@@ -50,19 +50,6 @@ boot cycle: run vLLM's exact lookup inside the serving image before restarting �
 -v <hf-cache>:/cache/huggingface <image> -c "from huggingface_hub import snapshot_download;
 print(snapshot_download('<repo>'))"`.
 
-## Never overlay the checkpoint's own encoder
-
-The checkpoint ships its own copy of the chat encoder at `encoding/encoding_dsv4.py`
-(deepseek-ai/DeepSeek-V4-Flash-0731 @ `9e165c30`). **Do not install it over vLLM's vendored
-encoder.** The checkpoint's copy corrupts tool-call arguments when `arguments` arrives as a
-dict instead of a JSON string — it wraps them under a spurious `arguments` key, and the model
-then *imitates the corruption* on every later turn (reported as
-[MiaAI-Lab issue #21](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/21),
-open). This kit is not exposed: it never installs the checkpoint encoder, and the vendored
-0.26 copy (`--tokenizer-mode deepseek_v4`) carries the isinstance fix. The warning matters
-only if you're tempted to "sync" the checkpoint's trust-remote-code files into the image —
-don't; the vendored copy is the corrected one.
-
 ## A/B gate (same pair, same image, same-day preview baseline)
 
 | Metric | Preview (DSpark) | 0731 | Verdict |
