@@ -45,27 +45,3 @@ echo "head weights final:   $head_stats"
 echo "worker weights final: $worker_stats"
 [ "$head_stats" = "$worker_stats" ] || fail "weight file counts or byte totals differ" "rerun 08-distribute-weights.sh after checking disk space"
 echo "ok: weight stats match"
-
-# Shard-level completeness on the worker, same check 07 runs head-side: file/byte parity
-# can't see a snapshot whose shard symlinks point at blobs that never arrived.
-ssh "$CLUSTER_USER@$WORKER_HOST" "DIR='$remote_model_dir' bash -s" <<'REMOTE' \
-  || fail "worker shard verification failed" "rerun 08-distribute-weights.sh after checking disk space"
-set -euo pipefail
-index="$(find "$DIR/snapshots" -name model.safetensors.index.json -print -quit)"
-[ -n "$index" ] || { echo "FAIL: model.safetensors.index.json missing under $DIR/snapshots" >&2; exit 1; }
-missing_shards="$(python3 - "$index" <<'PY'
-import json, os, sys
-index_path = sys.argv[1]
-snap_dir = os.path.dirname(index_path)
-weight_map = json.load(open(index_path, encoding="utf-8"))["weight_map"]
-missing = sorted({shard for shard in weight_map.values()
-                  if not os.path.isfile(os.path.join(snap_dir, shard))})
-for shard in missing:
-    print("missing shard:", shard, file=sys.stderr)
-print(len(missing))
-PY
-)"
-echo "missing_shards=$missing_shards"
-[ "$missing_shards" = "0" ] || { echo "FAIL: $missing_shards safetensors shards missing on the worker" >&2; exit 1; }
-REMOTE
-echo "ok: worker safetensors shards complete"

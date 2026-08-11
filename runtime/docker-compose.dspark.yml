@@ -59,10 +59,8 @@ services:
       # reuse stale graphs and mask the patch. Rollback to cand4 ⇒ point this back at
       # /cache/huggingface/vllm-cache (and the TRITON/TILELANG roots below at theirs).
       VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache-cand7
-      # LEGACY no-op on the 0.26 lane (verified 2026-08-10: zero readers in the installed
-      # vllm package — the crash class it guarded is handled by the overlay's own
-      # request-stable draft-KV slot mapping). Kept for harmlessness and 0.25.1-rollback
-      # compatibility, where it was live. See docs/LONG_CONTEXT_CRASH_FIX.md.
+      # Long-context crash fix kill-switch (see docs/LONG_CONTEXT_CRASH_FIX.md).
+      # 1 (default) = clamp stale DSpark draft-KV slot ids; 0 = detect+log only.
       DSPARK_SLOT_CLAMP: "${DSPARK_SLOT_CLAMP:-1}"
       VLLM_HOST_IP: "${VLLM_HOST_IP:-}"
 
@@ -140,9 +138,6 @@ services:
       # Reasoning toggle (see docs/06). on (default) = server-default thinking + the official
       # V4-Flash reasoning sampling (temp/top_p 1.0); off = non-think greedy, byte-identical to the
       # original tuned recipe. Effort: high (default) or max (max needs MAX_MODEL_LEN>=393216).
-      # The on-branch also pins drop_thinking:false so prior-turn CoT is preserved on non-tool
-      # multi-turn turns too (upstream default True drops it; tool turns were already preserved
-      # by the encoder). Cost: longer prompts on multi-turn sessions; prefix caching still applies.
       DSPARK_REASONING: "${DSPARK_REASONING:-on}"
       DSPARK_REASONING_EFFORT: "${DSPARK_REASONING_EFFORT:-high}"
 
@@ -160,7 +155,7 @@ services:
         export CUDAToolkit_ROOT="$${CUDAToolkit_ROOT:-$${CUDA_HOME}}";
         export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$${LD_LIBRARY_PATH:-}";
         SPECULATIVE_CONFIG="{\"method\":\"dspark\",\"num_speculative_tokens\":${MTP_NUM_TOKENS:-2},\"draft_sample_method\":\"probabilistic\"}";
-        if [ "$${DSPARK_REASONING:-on}" = "on" ]; then CHAT_KWARGS="{\"thinking\":true,\"reasoning_effort\":\"$${DSPARK_REASONING_EFFORT:-high}\",\"drop_thinking\":false}"; GEN_OVERRIDE="{\"temperature\":1.0,\"top_p\":1.0}"; else CHAT_KWARGS="{\"thinking\":false}"; GEN_OVERRIDE="{\"temperature\":0.0,\"top_p\":1.0}"; fi;
+        if [ "$${DSPARK_REASONING:-on}" = "on" ]; then CHAT_KWARGS="{\"thinking\":true,\"reasoning_effort\":\"$${DSPARK_REASONING_EFFORT:-high}\"}"; GEN_OVERRIDE="{\"temperature\":1.0,\"top_p\":1.0}"; else CHAT_KWARGS="{\"thinking\":false}"; GEN_OVERRIDE="{\"temperature\":0.0,\"top_p\":1.0}"; fi;
         MEMTOTAL_KB="$$(awk '/^MemTotal:/{print $$2}' /proc/meminfo)";
         REQUIRED_KB="$$(awk -v t="$$MEMTOTAL_KB" -v u="${GPU_MEMORY_UTILIZATION:-0.85}" 'BEGIN{printf "%d", t*u}')";
         MARGIN_KB=$$((${MEM_MARGIN_GIB:-3} * 1024 * 1024));
@@ -190,7 +185,6 @@ services:
         --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
         ${KV_CACHE_MEMORY_BYTES:+--kv-cache-memory-bytes ${KV_CACHE_MEMORY_BYTES}}
         --enable-prefix-caching
-        --enable-prompt-tokens-details
         --no-async-scheduling
         --enable-chunked-prefill
         --speculative-config "$${SPECULATIVE_CONFIG}"

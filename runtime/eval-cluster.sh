@@ -178,33 +178,16 @@ print(tokens, content.replace("\n", "\\n"))
 PY
 )
   pass=pass
-  if [ -z "$content" ]; then
-    # finish_reason=length with empty content is budget truncation (thinking ate the
-    # cap — the max_tokens trap, docs/06), NOT a model failure: classify it apart so the
-    # gate and the composite don't blame the model; re-run with a larger max_tokens.
-    finish_reason="$(python3 - "$response" <<'PY'
-import json, sys
-print((json.load(open(sys.argv[1], encoding="utf-8")).get("choices") or [{}])[0].get("finish_reason") or "")
-PY
-)"
-    if [ "$finish_reason" = "length" ]; then
-      pass=truncated
-      echo "note: $name — budget truncation (thinking ate the cap — re-run with larger max_tokens before blaming the model)" >&2
-    else
-      pass=fail
-    fi
-  fi
+  [ -n "$content" ] || pass=fail
   garble_check "$response" || pass=fail
-  if [ "$pass" != "truncated" ]; then
-    if [ "$assert_mode" = "contains4" ] && ! printf '%s\n' "$content" | grep -q '4'; then pass=fail; fi
-    if [ "$assert_mode" = "json" ]; then
-      python3 -m json.tool "$response" >/dev/null || pass=fail
-      python3 - "$response" <<'PY' >/dev/null || pass=fail
+  if [ "$assert_mode" = "contains4" ] && ! printf '%s\n' "$content" | grep -q '4'; then pass=fail; fi
+  if [ "$assert_mode" = "json" ]; then
+    python3 -m json.tool "$response" >/dev/null || pass=fail
+    python3 - "$response" <<'PY' >/dev/null || pass=fail
 import json, sys
 content=json.load(open(sys.argv[1], encoding="utf-8"))["choices"][0]["message"].get("content") or ""
 json.loads(content)
 PY
-    fi
   fi
   tokps="$(awk -v t="$tokens" -v e="$elapsed" 'BEGIN {printf "%.2f", t/e}')"
   printf '%s|%s|%s|%s|%s\n' "$name" "$elapsed" "$tokens" "$tokps" "$pass"
@@ -496,10 +479,7 @@ e2e_life   = hist_mean_ms(after, "vllm:e2e_request_latency_seconds")
 tpot_life  = hist_mean_ms(after, "vllm:request_time_per_output_token_seconds")
 
 rows = [ln.split("|") for ln in open(results_tsv, encoding="utf-8") if ln.strip()]
-# "truncated" rows are budget truncations (finish_reason=length + empty content — thinking
-# ate the cap), not model failures: exclude them from the correctness ratio like "skip".
-funct = [r for r in rows if len(r) >= 5 and r[4].strip() not in ("skip", "truncated")]
-n_truncated = sum(1 for r in rows if len(r) >= 5 and r[4].strip() == "truncated")
+funct = [r for r in rows if len(r) >= 5 and r[4].strip() != "skip"]
 n_pass = sum(1 for r in funct if r[4].strip() == "pass")
 correctness = (n_pass / len(funct)) if funct else 0.0
 
@@ -532,8 +512,6 @@ print(f"queue_depth_at_concurrency: running={fmt(q_run,0)} waiting={fmt(q_wait,0
 print(f"server_hist_lifetime_means: ttft_ms={fmt(ttft_life,1)} e2e_ms={fmt(e2e_life,1)} tpot_ms={fmt(tpot_life,1)} (cumulative-since-boot; context only)")
 print(f"client_ttft: idle_ms={ttft_idle} under_load_ms={ttft_load}")
 print(f"client_latency: p50_ms={lat_p50} p95_ms={lat_p95} p99_ms={lat_p99}")
-if n_truncated:
-    print(f"budget_truncations: {n_truncated} probe(s) hit finish_reason=length with empty content (thinking ate the cap — re-run with larger max_tokens; NOT counted as model failures)")
 print(f"composite_score: {composite:.1f}/100  (correctness={fmt(correctness,2)} garble={fmt(garble_clean,2)} latency_slo={fmt(latency_slo,2)} spec_decode={fmt(spec_health,2)})")
 PY
 

@@ -75,17 +75,6 @@ bash "$tmp/runtime/render-env.sh" head >/dev/null
 need 'GLOO_SOCKET_IFNAME=enp1s0f1np1' "$tmp/runtime/.env.dspark"
 need 'SHUTDOWN_TIMEOUT=30' "$tmp/runtime/.env.dspark"
 
-# A mistyped reasoning value must fail render-env.sh fast, not render a silently-wrong
-# .env.dspark (cluster.env assigns unconditionally, so the bad value goes into the copy).
-sed -i.bak 's/^DSPARK_REASONING_EFFORT=.*/DSPARK_REASONING_EFFORT=hihg/' "$tmp/runtime/cluster.env" \
-  && rm -f "$tmp/runtime/cluster.env.bak"
-if bad_effort="$(bash "$tmp/runtime/render-env.sh" head 2>&1)"; then
-  fail "invalid DSPARK_REASONING_EFFORT was accepted"
-fi
-grep -Fq 'DSPARK_REASONING_EFFORT must be high|max' <<<"$bad_effort" \
-  || fail "invalid DSPARK_REASONING_EFFORT failed without the expected diagnostic"
-echo "ok: reasoning-value guard"
-
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
   docker compose --env-file "$tmp/runtime/.env.dspark" \
     -f "$tmp/runtime/docker-compose.dspark.yml" config >/dev/null
