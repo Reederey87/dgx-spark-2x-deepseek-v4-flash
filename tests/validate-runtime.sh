@@ -17,18 +17,24 @@ for script in "${scripts[@]}"; do
 done
 echo "ok: bash syntax (${#scripts[@]} scripts)"
 
-need 'DSPARK_VLLM_BASE_IMAGE=vllm/vllm-openai:v0.26.0@sha256:ffb2d59b1c059a5bd8d781320c9f5189de8293693b7d95da54befddaa54abf52' runtime/cluster.env.example
-need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v026-gx10-cand7-backports' runtime/cluster.env.example
-need 'vllm-dspark-runtime:v026-gx10-cand7-backports' runtime/docker-compose.dspark.yml
-need 'gx10-overlay-026.patch' patches/vllm-026-rebase/README.md
-need 'zero-token-prefill-chunk guard' patches/vllm-026-rebase/README.md
-need 'cand7 production lane' patches/vllm-026-rebase/README.md
-# Source-patch image keeps its own compile-cache roots (the -cand7 set) — see docs/13.
-need 'vllm-cache-cand7' runtime/docker-compose.dspark.yml
-need 'triton-cache-cand7' runtime/cluster.env.example
-need 'tilelang-cand7' runtime/cluster.env.example
+# Production defaults: full-source c8r lane (docs/14).
+need 'DSPARK_VLLM_BASE_IMAGE=vllm-dspark-src:v0261-main-c8' runtime/cluster.env.example
+need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v0261-main-c8r' runtime/cluster.env.example
+need 'vllm-dspark-runtime:v0261-main-c8r' runtime/docker-compose.dspark.yml
+need '48bada6ea4' patches/vllm-0261-main-c8r/README.md
+need 'current production image recipe' patches/vllm-0261-main-c8r/README.md
+need 'overlay0261' patches/vllm-0261-main-c8r/README.md
+# Full-source image keeps its own compile-cache roots (the -c8r set) — see docs/14.
+need 'vllm-cache-c8r' runtime/docker-compose.dspark.yml
+need 'triton-cache-c8r' runtime/cluster.env.example
+need 'tilelang-c8r' runtime/cluster.env.example
+# cand7 remains the first image rollback rung (prior build script + docs/13).
+need 'v026-gx10-cand7-backports' runtime/cluster.env.example
+need 'cand7 lane' patches/vllm-026-rebase/README.md
 need 'vLLM PR #47356' patches/vllm-pr47356-vgx10/README.md
 need 'kv_cache_memory_bytes' patches/vllm-pr47356-vgx10/cache-hash-exclude-kv-bytes.patch
+need 'bringup/05-build-image.sh' bringup/05-build-image.sh
+need 'patches/vllm-0261-main-c8r/build-0261-image.sh' bringup/05-build-image.sh
 need 'GLOO_SOCKET_IFNAME=enp1s0f1np1' runtime/cluster.env.example
 need 'SHUTDOWN_TIMEOUT=30' runtime/cluster.env.example
 need '--shutdown-timeout ${SHUTDOWN_TIMEOUT:-30}' runtime/docker-compose.dspark.yml

@@ -27,7 +27,7 @@ tuned for a **dedicated** 2× GB10 pair:
 |---|---|---|
 | `MAX_MODEL_LEN` | `1048576` | True YaRN ceiling (65536×16). First rung of the OOM ladder. |
 | `MAX_NUM_SEQS` | `12` | Concurrent streams. |
-| `GPU_MEMORY_UTILIZATION` | `0.85` | Bounds the total footprint; the KV pool is pinned at **2,948,751 tokens** via `KV_CACHE_MEMORY_BYTES` (pin bypasses profiler sizing — see [08](08-optimization-and-vllm-025.md)). `0.80` if co-locating other GPU work. |
+| `GPU_MEMORY_UTILIZATION` | `0.85` | Bounds the total footprint; the KV pool is pinned via `KV_CACHE_MEMORY_BYTES` at **3,027,217 tokens** on the c8r lane (same 19.85 GiB pin; #48993 packing — see [14](14-vllm-027-c8r.md); cand7 rollback reports 2,948,751). `0.80` if co-locating other GPU work. |
 | `MTP_NUM_TOKENS` | `2` | DSpark speculative draft length — the garble fix (see [03](03-model-and-features.md)); `2` since the 2026-07-29 K re-tune (see [11](11-v026-feature-qualification.md)). |
 
 Key serve argv facts baked into the compose: `--tensor-parallel-size 2`,

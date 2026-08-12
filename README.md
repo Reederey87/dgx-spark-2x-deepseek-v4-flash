@@ -4,49 +4,67 @@ Two desk-side **NVIDIA DGX Sparks**, one QSFP cable, and this kit — that's eve
 need to serve **DeepSeek-V4-Flash-0731** (a 284B-parameter MoE, ~13B active per token) at
 up to **1M tokens of context**. vLLM splits the model across both boxes (tensor-parallel
 2), and the head node exposes a plain OpenAI-compatible API on its loopback
-(`127.0.0.1:8000`). This repo is the full recipe: configs, scripts, systemd units, and
-docs that explain *why* every knob is set the way it is.
+(`127.0.0.1:8000`). This repo is the full production recipe: configs, scripts, systemd
+units, image build, and docs that explain *why* every knob is set the way it is.
+
+**Current production stack (2026-08-11):** full-source vLLM **main @48bada6ea4**
+(0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert → image
+`vllm-dspark-runtime:v0261-main-c8r`, built by
+[patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/). Weights:
+[`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
+at revision `9e165c30e2704aec5d9d593cce3eebd58bbef1cb`. KV pool **3,027,217 tokens** at
+the pinned 19.85 GiB budget. Full receipt: [docs/14](docs/14-vllm-027-c8r.md).
 
 **0731 is the official V4-Flash release** (2026-07-31), superseding the
-`DeepSeek-V4-Flash-DSpark` preview this kit originally shipped. Same checkpoint family,
-same ~155.4 GiB footprint, byte-identical config and tokenizer — but a large jump in
-agentic capability (see [Performance](#performance)). Already running the preview?
-Upgrading is one variable (`DSPARK_MODEL`, plus its `DSPARK_REVISION` pin), and the
-preview stays a supported rollback.
+`DeepSeek-V4-Flash-DSpark` preview. Same checkpoint family, same ~155.4 GiB footprint,
+byte-identical config and tokenizer — large jump in agentic capability (see
+[Performance](#performance)). Preview stays a one-variable weights rollback.
 
-Nothing here is a black box. The serving image is *built* from the pinned, official
-arm64 `vllm/vllm-openai:v0.26.0` image plus a small reviewable patch (the gx10 GB10
-overlay + five DSv4 backports — [patches/vllm-026-rebase/](patches/vllm-026-rebase/)),
-and the weights are pulled from Hugging Face at deploy time. No prebuilt third-party
-image, no accounts, no tokens. Prior lanes (0.25.1, 0.21.x) are preserved one config swap
-away ([docs/08](docs/08-optimization-and-vllm-025.md)); the latest image update and how
-its picks were chosen is [docs/13](docs/13-vllm-026-cand7.md). See [NOTICE](NOTICE) for
-upstream attribution.
+Nothing here is a black box. The serving image is *built* from a pinned upstream vLLM
+commit plus a reviewable overlay (no prebuilt third-party image you cannot rebuild), and
+the weights are pulled from Hugging Face at deploy time. No accounts, no tokens. Prior
+lanes (0.26 cand7, 0.25.1, 0.21.x) are one config + image swap away. See [NOTICE](NOTICE)
+for upstream attribution.
 
-## Why this kit
+## Why use this kit (benefits for other users)
+
+Most dual-Spark DeepSeek writeups are a blog post and a hope. This kit is the **operating
+system for the cluster** — the same recipe that runs in production on a real pair, cut
+down so someone else can reproduce it without rediscovering the traps.
+
+| Benefit | What you actually get |
+|---|---|
+| **End-to-end reproducibility** | Numbered `bringup/00–09` path from bare nodes → fabric → image → weights → smoke → systemd. Hostnames are the only required edit (`runtime/cluster.env.example`). |
+| **Production-shaped, not demo-shaped** | Boot-persistent user units, inference watchdog, metrics timer, preflight invariant checks, ordered worker-before-head restarts, loopback-only API by default. |
+| **Evidence-gated knobs** | Every non-obvious default (MTP n=2, `--no-async-scheduling`, KV byte pin, attention backend, cache-root isolation) has a measured A/B and a doc page. You can re-run the gates on your hardware. |
+| **Auditable trust surface** | Public HF weights + pinned upstream vLLM SHA + overlay you can read. No kit-side telemetry, no opaque registry image as the only option. |
+| **Documented rollback rungs** | Weights (0731 ↔ preview), image (c8r → cand7 → cand4 → 0.25.1 → 0.21), and cache roots that *must* move with the image — spelled out so a bad upgrade is reversible. |
+| **Fabric that is measured** | Dual-twin QSFP RoCEv2 A/B (`bringup/04`), NCCL gate ≥15 GB/s, proven ~23 GB/s dual-rail path — not "plug a cable and pray." |
+| **Ops that survive Monday** | Warm-up after restart, swap/churn observability, optional Telegram alerts, Xid evidence capture that never restarts vLLM for you. |
+| **Agent-ready API surface** | Thinking on by default (`message.reasoning`), DeepSeek-V4 tool parser, 1M context, prefix caching — the profile agents actually need. |
+
+What this is **not**: a guarantee that your pair will hit the same tok/s, a hosted image
+registry product, or a substitute for reading the gotchas in `docs/05` and `docs/14`. It
+is the shortest path from "I have two Sparks" to "I have a correct, boot-persistent,
+1M-context DeepSeek endpoint" with the failure modes already written down.
+
+## Why this deployment shape
 
 Two desktop boxes and one cable get you:
 
 - **A 284B MoE with a 1M context window, at home.** The two Sparks pool ~242 GiB of
-  unified memory, and NVFP4 KV quantization stretches that into a **2,948,751-token KV
-  pool** — 2.81 full-length 1M sessions at once. Long-context agentic work stops being
-  theoretical on this hardware.
-- **Real speed, measured — not claimed.** ~34 tok/s for a single stream, ~93 tok/s
-  aggregate at concurrency 8, and the DSpark speculative drafter lands **0.796–0.875
-  measured acceptance**. Every number ships with its workload and its gate in
-  `docs/08`–`docs/13`.
+  unified memory; NVFP4 KV + the c8r packing path stretches that into a
+  **3,027,217-token KV pool** (~2.89× concurrent full-length 1M sessions). Long-context
+  agentic work stops being theoretical on this hardware.
+- **Real speed, measured — not claimed.** ~34 tok/s single stream, ~88 tok/s aggregate at
+  concurrency 8 on the warm c8r gate (throughput-tie vs the prior 0.26 cand7 lane), with
+  DSpark speculative decode acceptance in the ~0.80 band at draft length 2. Every number
+  ships with its workload and gate in `docs/08`–`docs/14`.
 - **One cable, no cluster plumbing.** Tensor-parallel over a single QSFP 200GbE link: no
   Ray, no switch, no Ethernet fabric — NCCL RDMA at ~23 GB/s, vLLM's native `mp` backend,
-  and plain systemd user units (no root).
-- **Production ops, not a demo.** Self-healing boot-persistent services, an inference
-  watchdog, an observability timer, preflight invariant checks, a 100/100 eval gate, a
-  loopback-only API by default, and documented rollback rungs for weights, image, and
-  config.
-- **A trust surface you can actually audit.** Official upstream vLLM image + a ~1.7K-line
-  patch + public weights — no prebuilt third-party image, no tokens, no kit-side
-  telemetry. Every change to the lane is evidence-gated (same-day A/B, acceptance,
-  garble, long-context needles) and written down, so you can check *why* each knob is
-  what it is — not just what it is.
+  plain systemd user units (no root).
+- **A stack you can rebuild.** Full-source stage-1 from upstream's own Dockerfile, then a
+  thin runtime overlay — not an irreplaceable community binary as the only path.
 
 ## Reproducibility
 
@@ -57,17 +75,15 @@ Everything you need is **public — no accounts, no tokens, anywhere**:
 - **Weights:** [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
   is a public Hugging Face repo — no token required. (Preview rollback:
   [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark).)
-- **Serving image:** the official `vllm/vllm-openai:v0.26.0` (linux/arm64, public on
-  Docker Hub), the overlay patch in this repo, and two public git pins (b12x, FlashInfer).
-  You never have to trust a community-built image — just upstream vLLM and a ~1.7K-line
-  patch you can read in one sitting.
-- **Path:** clone → `bringup/00–09` (node prep, fabric check, NCCL bench, image build +
-  distribute, weights, smoke test) → `runtime/cluster.env` from the example → systemd units.
+- **Serving image:** full-source build of upstream vLLM `main` @ `48bada6ea4` + the
+  overlay in this repo ([patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/)).
+  First rollback is the thinner official `vllm/vllm-openai:v0.26.0` + cand7 overlay
+  ([patches/vllm-026-rebase/](patches/vllm-026-rebase/)).
+- **Path:** clone → `bringup/00–09` → `runtime/cluster.env` from the example → systemd.
 
 Two honest caveats: every number here was measured on one 2× pair — yours will vary —
-and the overlay is a delta against vLLM v0.26.0, so future upstream releases need it
-re-based (the mechanism, and the gates that prove a rebase healthy, are in
-[docs/10](docs/10-vllm-026-rebase.md) and the patch-kit README).
+and the full-source stage-1 is multi-hour nvcc (cluster stopped). The thinner 0.26 cand7
+image remains a supported rollback if you need a faster rebuild path.
 
 > ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
 > single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
@@ -138,8 +154,11 @@ bash bringup/01-verify-fabric.sh     # QSFP addressing, MTU 9000, RoCE up, jumbo
 bash bringup/02-setup-cluster-ssh.sh # node-to-node SSH over the QSFP rail IPs
 bash bringup/03-build-nccl-tests.sh  # NCCL v2.30u1 + nccl-tests at sm_121, both nodes
 bash bringup/04-run-nccl-bench.sh    # A/B the RDMA arms; put the winner in cluster.env (gate ≥15 GB/s)
-bash bringup/05-build-image.sh       # build the 0.26.0 gx10-overlay image (patches/vllm-026-rebase/)
-bash bringup/06-distribute-image.sh  # copy the image head → worker over QSFP; verify IDs match
+
+# Image build: full-source stage-1 is multi-HOUR nvcc — stop any serving containers first.
+# One-time: git -C ~/vllm worktree add ~/vllm-0261-main-wt 48bada6ea4
+bash bringup/05-build-image.sh --distribute   # c8r build + worker push; or omit --distribute and run 06
+# bash bringup/06-distribute-image.sh         # only if you skipped --distribute above
 bash bringup/07-download-weights.sh  # pull public weights to the head's token-free HF cache
 bash bringup/08-distribute-weights.sh # rsync weights head → worker; verify file/byte parity
 bash bringup/09-smoke-serve.sh       # foreground bring-up via compose; /health + a chat completion
@@ -147,6 +166,7 @@ bash bringup/09-smoke-serve.sh       # foreground bring-up via compose; /health 
 # 5. Install the systemd user units, make the cluster primary, evaluate.
 bash bringup/install-services.sh     # sync kit + install units on both nodes (does not start them)
 bash runtime/cluster-enable.sh       # enable for boot + start (worker-first) + poll /health
+# First boot on empty -c8r cache roots is a full cold compile (~12 min). Warm before gating.
 bash runtime/eval-cluster.sh         # correctness + throughput + long-context needle probes
 ```
 
@@ -186,11 +206,11 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MAX_NUM_SEQS` | `12` | Concurrent streams. Drop toward `4` → `1` under memory pressure. |
 | `MAX_NUM_BATCHED_TOKENS` | `8192` | Prefill batch budget. |
 | `GPU_MEMORY_UTILIZATION` | `0.85` | Share of the ~121 GiB **unified** pool. Drop to `0.80` if you co-locate other GPU processes on the head. Never exceed ~0.86. |
-| `KV_CACHE_MEMORY_BYTES` | `21316272128` | Pins the KV pool in bytes (**2,948,751 tokens**) instead of profiler sizing — larger and zero boot-to-boot variance. Set = vLLM skips profiling and ignores `GPU_MEMORY_UTILIZATION` for KV sizing. **No free-memory clamp** — an oversized pin OOMs the boot. Unset = profiler sizing returns. See `docs/08`. |
+| `KV_CACHE_MEMORY_BYTES` | `21316272128` | Pins the KV pool in bytes (**3,027,217 tokens** on c8r via #48993 packing; cand7 rollback reports 2,948,751 at the same pin). Set = vLLM skips profiling and ignores `GPU_MEMORY_UTILIZATION` for KV sizing. **No free-memory clamp** — an oversized pin OOMs the boot. Unset = profiler sizing returns. See `docs/08`, `docs/14`. |
 | `MTP_NUM_TOKENS` | `2` | DSpark speculative draft length — the current sweet spot: **+3.8% single-stream decode vs `3`, concurrency-8 tie** (measured, see `docs/11`). `3` is a fine fallback; greedy `5` is unsafe (garble risk, see `docs/03`). |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | `72` | Keeps the spec-decode decode path graphed at concurrency. Derive as `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — `72 = 12 × (2+1) × 2`. See `docs/08`. |
 | `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | The supported CUDA-graph route for this model. **Keep `1`.** See `docs/08`. |
-| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-cand7` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). The `-cand7` root follows the source-patch cache-root rule (own roots per source-patch image; see `docs/13`). |
+| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-c8r` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). The `-c8r` root follows the full-source cache-root rule (own roots per image generation; see `docs/14`). |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
 | `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
@@ -199,9 +219,9 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 
 The serve argv also pins `--attention-config '{"backend":"FLASHINFER_MLA_SPARSE_DSV4"}'`
 (the SM120 sparse-MLA route — explicit drift-guard; the default would resolve identically)
-and `--no-async-scheduling` (on 0.26 the async default would shrink the *reported* KV pool
-by ~30% via upstream #47728's doubled sliding-window reservation — measured
-throughput-neutral, so the pool comes back for free; see `docs/10`, `docs/11`).
+and `--no-async-scheduling` (on 0.26+ the async default would shrink the *reported* KV pool
+via upstream #47728's doubled sliding-window reservation — measured throughput-neutral, so
+the pool comes back for free; see `docs/10`, `docs/11`).
 
 ---
 
@@ -210,46 +230,41 @@ throughput-neutral, so the pool comes back for free; see `docs/10`, `docs/11`).
 All measured on our own 2× GB10 pair (`GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`).
 Treat these as **observations, not guarantees** — yours will vary.
 
-**DeepSeek-V4-Flash-0731 (current, 2026-07-31):**
+**DeepSeek-V4-Flash-0731 on c8r (current, 2026-08-11 warm gate):**
 
 | Metric | Result |
 |---|---|
-| **Composite eval score** | **100 / 100** — correctness 1.00 · garble-clean 1.00 · latency-SLO 1.00 · spec-decode 1.00 |
-| Throughput — single stream (C1) | **34.2 tok/s** best (6 batches) |
-| Throughput — aggregate @ concurrency 8 (C8) | **93.0 tok/s** best, ~89.2 mean (6 batches) |
-| Spec-decode acceptance (eval-mix / nprobe battery) | **0.796–0.823 / 0.875** (draft len 2, probabilistic) |
-| Deep-context retrieval | **3/3 needle HITs @ 944,471 tokens** (10%/90% depths) + 200K; garble 1.00 |
-| KV cache pool | **2,948,751 tokens** (pinned) — unchanged vs preview; max concurrency @ 1M ctx **2.81×** |
-| Serving image | `vllm-dspark-runtime:v026-gx10-cand7-backports` — official `linux/arm64` `vllm/vllm-openai:v0.26.0` + the gx10 overlay + backports #50004/#49486 + the cand7 increment #48957/#48047/#50330 (throughput-neutral at gate; buys the #50330 draft-quant correctness fix), built by [patches/vllm-026-rebase/](patches/vllm-026-rebase/) — see [docs/13](docs/13-vllm-026-cand7.md) |
-| Dependencies | release lock (torch 2.11.0, cutlass-dsl 4.6.0, tvm-ffi 0.1.10, flashinfer-cubin 0.6.14) **except** FlashInfer `0.6.15-dev @0472b9b3` — proven load-bearing (the stock-0.6.14 build crashes on first decode traffic; see `docs/11`) |
-| Rollback | weights: flip `DSPARK_MODEL` back to `DeepSeek-V4-Flash-DSpark` + its `DSPARK_REVISION` pin (both checkpoints can stay resident) · image: `vllm-dspark-runtime:v026-gx10-cand4-backports` + its cache roots (first rung), then `vgx10-011-pr47356` (the 0.25.1 lane) |
+| Throughput — single stream (C1) | **33.85 tok/s** mean (6 batches; −1.14% vs same-day cand7, Welch TIE) |
+| Throughput — aggregate @ concurrency 8 (C8) | **87.78 tok/s** mean (6 batches; +0.11% vs same-day cand7, Welch TIE) |
+| Spec-decode acceptance (eval) | **0.800** mean draft length 1.60 (draft len 2, probabilistic) |
+| Bench acceptance | **0.495 / 0.490** (flat vs cand7) |
+| Deep-context retrieval | **3/3 needle HITs @ ~944K** (prior 0731 gate; c8 arm reconfirmed) |
+| KV cache pool | **3,027,217 tokens** (same 19.85 GiB pin as cand7; **+2.7%** via #48993 packing) — ~**2.89×** concurrent @ 1M |
+| Serving image | `vllm-dspark-runtime:v0261-main-c8r` — full-source main @`48bada6ea4` + overlay0261 + #49731 revert, built by [patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/) — see [docs/14](docs/14-vllm-027-c8r.md) |
+| Dependencies | main's pins at the SHA (FlashInfer **0.6.16.post3**, b12x lineage, torch/CUDA from the stage-1 Dockerfile) + DeepGEMM rebuild at the 0.26-class SM120 pin |
+| Rollback | weights: flip `DSPARK_MODEL` to `DeepSeek-V4-Flash-DSpark` + its `DSPARK_REVISION` · image: `v026-gx10-cand7-backports` + `-cand7` roots (first rung), then cand4, then `vgx10-011-pr47356` (0.25.1) |
 
 > ⚠️ **These are short-context numbers.** Every C1/C8 throughput figure above was measured
 > at prompts of a few K tokens; **decode rate at 500K+ context is unmeasured on this
 > lane.** The open datapoint that motivated measuring it is
 > [MiaAI-Lab issue #22](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/22):
-> on a different lane (Anemll 0.25.2, MTP-5, third-party weights, uncontrolled A/B) a
-> reporter saw `nvfp4_ds_mla` decode collapse to ~1 tok/s at ~630K context vs 17.3 tok/s
-> on `fp8_ds_mla` — mechanism unclear, but nobody has the measurement here either.
-> `runtime/bench-decode-depth.py` closes that blind spot (see
-> [docs/07](docs/07-observability-and-warmup.md)); `fp8_ds_mla` is the diagnostic perf arm
-> at depth.
+> on a different lane a reporter saw `nvfp4_ds_mla` decode collapse at huge context vs
+> `fp8_ds_mla`. `runtime/bench-decode-depth.py` closes that blind spot (see
+> [docs/07](docs/07-observability-and-warmup.md)).
 
-**0731 vs the best preview deploy** (same pair, same image, same-day A/B — preview numbers
-are the 2026-07-29 n=2 promotion re-measured pre-upgrade):
+**c8r vs the prior cand7 prod** (same pair, same-day warm A/B, 2026-08-11):
 
-| Metric | Preview (DSpark) | 0731 | Delta |
+| Metric | cand7 | c8r | Delta |
 |---|---|---|---|
-| C8 aggregate tok/s | 94.2 best / ~89.3 mean | 93.0 best / ~89.2 mean | **tie (within noise)** |
-| C1 single-stream tok/s | 36.1 best / ~35.8 mean | 34.2 best / ~32.7 mean | **−5…−8%** |
-| Spec-decode acceptance — eval workload | 0.788 | **0.796–0.823** | **up** |
-| Spec-decode acceptance — nprobe battery | 0.842 | **0.875** | **+3.9%** |
-| Needles @ 944K + 200K | 3/3 HIT | 3/3 HIT | unchanged |
-| Garble / eval composite | 1.00 / 100 | 1.00 / 100 | unchanged |
-| KV pool (pinned) | 2,948,751 tok | 2,948,751 tok | unchanged |
+| C8 aggregate tok/s (mean) | 87.68 | **87.78** | **tie (+0.11%)** |
+| C1 single-stream tok/s (mean) | 34.24 | **33.85** | **tie (−1.14%)** |
+| Bench acceptance | 0.502 / 0.488 | 0.495 / 0.490 | flat |
+| KV pool (same byte pin) | 2,948,751 | **3,027,217** | **+2.7%** |
 
-The short version: same speed at concurrency, a small single-stream dip, **better draft
-acceptance everywhere** — and the real reason to upgrade is quality, not speed:
+The short version: **same speed, larger KV pool**, plus native 0.27-content sparse-MLA /
+packing work that is not deliverable as a thin 0.26 source patch.
+
+**0731 agentic quality** (why the model upgrade mattered, independent of the image):
 
 ![DeepSeek-V4-Flash-0731 agentic benchmarks vs the preview, V4-Pro preview, GLM-5.2 and Opus-4.8 (source: DeepSeek model card)](docs/images/deepseek-v4-flash-0731-agentic-benchmarks.jpeg)
 
@@ -257,7 +272,7 @@ DeepSeek's published agentic results for 0731 vs the preview this kit previously
 **Terminal-Bench 2.1 82.7 vs 61.8**, **DeepSWE 54.4 vs 7.3**, **NL2Repo 54.2 vs 39.4**,
 Cybergym 76.7 vs 38.7, Toolathlon-Verified 70.3 vs 49.7 — ahead of even the V4-Pro preview
 on every row (source: [DeepSeek-V4-Flash-0731 model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)).
-Upgrade evidence + the two offline-cache traps it surfaced: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
+Upgrade evidence: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 
 One 0731 quirk worth knowing: give it a prompt with a **numeric length constraint** or a
 very long single-shot ask, and it will word-count and re-draft inside its thinking —
@@ -266,12 +281,11 @@ the answer. Tool-use and agentic traffic never notice; for long-form asks, leave
 chunk them. See `docs/12`.
 
 `eval-cluster.sh` prints the composite plus the throughput/latency probes in one run;
-`SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes. Prior-lane figures
-(0.25.1, 0.21.x) are preserved in [docs/08](docs/08-optimization-and-vllm-025.md); the
-0.26.0 promotion evidence is in [docs/10](docs/10-vllm-026-rebase.md), the day-2
-qualification round in [docs/11](docs/11-v026-feature-qualification.md), the 0731
-model upgrade in [docs/12](docs/12-dsv4-flash-0731-upgrade.md), and the cand7 backport
-round in [docs/13](docs/13-vllm-026-cand7.md).
+`SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes. History:
+[docs/08](docs/08-optimization-and-vllm-025.md) (0.25.1) →
+[docs/10](docs/10-vllm-026-rebase.md) / [docs/11](docs/11-v026-feature-qualification.md)
+(0.26.0) → [docs/12](docs/12-dsv4-flash-0731-upgrade.md) (0731 weights) →
+[docs/13](docs/13-vllm-026-cand7.md) (cand7) → [docs/14](docs/14-vllm-027-c8r.md) (c8r).
 
 ---
 
@@ -287,19 +301,20 @@ round in [docs/13](docs/13-vllm-026-cand7.md).
 | [docs/06-reasoning-mode.md](docs/06-reasoning-mode.md) | Turning on thinking mode, the `message.reasoning` field (not `reasoning_content`), the sampling profile, the `max_tokens` trap, tool-call behavior, and client integration. |
 | [docs/07-observability-and-warmup.md](docs/07-observability-and-warmup.md) | Observability watcher, the prefill-HoL guard, per-request cached-token telemetry, Telegram alerts, readiness warm-up, the eval composite score, and the decode-at-depth bench (`runtime/bench-decode-depth.py`). |
 | [docs/08-optimization-and-vllm-025.md](docs/08-optimization-and-vllm-025.md) | The A/B decision ledger and the **vLLM 0.25.1 promotion** (2026-07-15): the two-candidate distinction, config deltas, hardening pass, residual gaps, and the preserved prior 0.21.x lane + rollback. |
-| [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask, incl. the +1.8% TPOT DeepSeek-V4 perf commit. |
+| [docs/09-upstream-backport-candidates.md](docs/09-upstream-backport-candidates.md) | Post-v0.25.1 upstream vLLM fixes verified **absent** in the gx10 image (in-container probes), ranked — the evidence-backed maintainer ask. |
 | [docs/10-vllm-026-rebase.md](docs/10-vllm-026-rebase.md) | The **vLLM 0.26.0 promotion** (2026-07-28): the in-house rebase (official image + gx10 overlay + backports), the two guards it needs, the acceptance-regression hunt, evidence, and rollback. |
-| [docs/11-v026-feature-qualification.md](docs/11-v026-feature-qualification.md) | The **0.26.0 feature-qualification round** (2026-07-29): the 12-row release-feature audit (what's active, ineligible, or evidence-backed), the DSpark **n=2** K re-tune, the explicit backend pin, and the FlashInfer vendor-pin crash proof. |
-| [docs/12-dsv4-flash-0731-upgrade.md](docs/12-dsv4-flash-0731-upgrade.md) | The **DeepSeek-V4-Flash-0731 model upgrade** (2026-07-31): compatibility proof (byte-identical config/tokenizer, same footprint), the A/B gate numbers vs the preview, the two offline-cache traps (`refs/main`), and the 0731 long-form deliberation trait. |
-| [docs/13-vllm-026-cand7.md](docs/13-vllm-026-cand7.md) | The **cand7 backport round** (2026-08-10): the 836-commit post-0.26.0 survey, on-path pick selection (and the cand6 −10.7% rejection lesson), the throughput-neutral gate, and the source-patch cache-root rule. |
-| [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard — **legacy no-op on the 0.26 lane** (zero readers in the installed package; the overlay handles the crash class itself), kept for 0.25.1-rollback compatibility. |
+| [docs/11-v026-feature-qualification.md](docs/11-v026-feature-qualification.md) | The **0.26.0 feature-qualification round** (2026-07-29): the 12-row release-feature audit, the DSpark **n=2** K re-tune, the explicit backend pin, and the FlashInfer vendor-pin crash proof. |
+| [docs/12-dsv4-flash-0731-upgrade.md](docs/12-dsv4-flash-0731-upgrade.md) | The **DeepSeek-V4-Flash-0731 model upgrade** (2026-07-31): compatibility proof, the A/B gate numbers vs the preview, the two offline-cache traps, and the 0731 long-form deliberation trait. |
+| [docs/13-vllm-026-cand7.md](docs/13-vllm-026-cand7.md) | The **cand7 backport round** (2026-08-10): now the first image rollback rung; on-path pick selection, throughput-neutral gate, source-patch cache-root rule. |
+| [docs/14-vllm-027-c8r.md](docs/14-vllm-027-c8r.md) | The **c8r full-source 0.27-content promotion** (2026-08-11): main @48bada6ea4, overlay0261, #49731 revert, warm-gate TIE + larger KV pool, cold-cache lesson. |
+| [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard — **legacy no-op on 0.26+/c8r** (zero readers in the installed package; the overlay handles the crash class itself), kept for 0.25.1-rollback compatibility. |
 
 ---
 
 ## License & attribution
 
 Licensed under Apache-2.0 (see [LICENSE](LICENSE)). This kit is orchestration and documentation
-only — it vendors no upstream source; the serving image is built from a pinned community recipe and
+only — it vendors no upstream source; the serving image is built from a pinned upstream tree and
 the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
 the recipe/image, and the GB10 kernels) each ship under their own licenses; see [NOTICE](NOTICE) for
 the attribution required by those licenses. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).

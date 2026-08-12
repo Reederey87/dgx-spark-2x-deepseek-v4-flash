@@ -272,8 +272,9 @@ tradeoff, not a free upgrade — if you're chasing decode throughput, this is a 
 **Historical note (0.21.x era):** this repo originally pinned the tonyd2wild recipe +
 `dspark-nvfp4-stage-c-fi3615` image as the proven default. That lane was superseded by the
 0.25.1 lane on 2026-07-15 ([08](08-optimization-and-vllm-025.md)) and then by vLLM 0.26.0
-([10](10-vllm-026-rebase.md)) — the current image is `v026-gx10-cand7-backports`
-([13](13-vllm-026-cand7.md)); the 0.21.x pins survive only as a commented rollback block in
+([10](10-vllm-026-rebase.md)) — the current image is `v0261-main-c8r`
+([14](14-vllm-027-c8r.md)); cand7 (`v026-gx10-cand7-backports`, [13](13-vllm-026-cand7.md))
+is the first image rollback; the 0.21.x pins survive only as a commented rollback block in
 `runtime/cluster.env.example`. Known alternatives that this kit does **not** ship:
 
 - **drowzeys' vLLM 0.24.0 port** — `git-apply` patches rather than a prebuilt image.

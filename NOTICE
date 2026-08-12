@@ -11,27 +11,32 @@ under its own license. This project orchestrates and documents them.
 Attributed upstreams:
 
   - vLLM                         (Apache-2.0)   — the inference engine. The current
-                                   default lane pins the official v0.26.0 image and
-                                   applies the overlay/backports as a source patch
-                                   (patches/vllm-026-rebase/); the prior lane pinned
-                                   0.25.1, with upstream PR #47356 vendored as a source
-                                   patch (patches/vllm-pr47356-vgx10/).
+                                   default lane is a full-source build of upstream
+                                   main @48bada6ea4 (0.27-content) plus the gx10
+                                   overlay and a #49731 revert
+                                   (patches/vllm-0261-main-c8r/). The first image
+                                   rollback is official v0.26.0 + overlay/backports
+                                   (patches/vllm-026-rebase/); deeper rollback pins
+                                   0.25.1 with upstream PR #47356 as a source patch
+                                   (patches/vllm-pr47356-vgx10/).
   - DeepSeek-V4-Flash-0731       — model weights, by DeepSeek AI, under the
                                    license stated on its Hugging Face model card
                                    (MIT); the prior preview checkpoint
                                    DeepSeek-V4-Flash-DSpark remains the
                                    weights-rollback option, same license
   - anemll                       — the dspark-vllm-gx10 community GB10 port: the gx10
-                                   overlay at the heart of the 0.26.0 lane, and the
-                                   digest-pinned vLLM 0.25.1 base image of the prior lane
+                                   overlay carried forward into the c8r and 0.26.0
+                                   lanes, and the digest-pinned vLLM 0.25.1 base of
+                                   the deeper rollback lane
   - b12x                         — the MXFP4 MoE kernel package used by the GB10
                                    serving images (VLLM_USE_B12X_MOE)
-  - FlashInfer                   (Apache-2.0)   — the top-k/top-p sampler. The 0.25.1
-                                   base carries FlashInfer 0.6.15-dev, which already
-                                   includes PR #3615 (commit 49f2abf), the SM120/121
-                                   multi-CTA radix top-k reset-race fix; the prior
-                                   0.21.x lane vendors that same PR as a source patch
-                                   (patches/flashinfer-pr3615/).
+  - FlashInfer                   (Apache-2.0)   — the top-k/top-p sampler. The c8r
+                                   full-source base pins FlashInfer 0.6.16.post3
+                                   (native on main); the 0.26.0 cand7 lane used
+                                   0.6.15-dev. Both include the SM120/121 multi-CTA
+                                   radix top-k reset-race fix lineage (PR #3615);
+                                   the prior 0.21.x lane vendors that PR as a source
+                                   patch (patches/flashinfer-pr3615/).
   - tonyd2wild                   — the 2x-DGX-Spark NVFP4/DSpark serving recipe the
                                    prior 0.21.x lane vendors and pins (docker-compose)
   - drowzeys ("Keys")            — the DSpark concurrency patch, nvfp4_ds_mla KV,

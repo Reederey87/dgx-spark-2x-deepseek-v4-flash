@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: MIT
+# Runtime layer for cand8: vLLM main @ 48bada6ea4 (v0.26.1rc0-590-g48bada6ea4) + gx10
+# GB10 overlay (overlay0261/). Modeled on patches/vllm-026-rebase/Dockerfile.runtime-026
+# with one structural difference: VLLM_BASE there is the official arm64
+# vllm/vllm-openai:v0.26.0; here NO official arm64 image exists for this base, so
+# VLLM_BASE is the LOCALLY BUILT stage-1 image (vllm-dspark-src:v0261-main-c8 — upstream
+# docker/Dockerfile --target vllm-openai --build-arg torch_cuda_arch_list=12.1a, built
+# from the pinned source tree by build-0261-image.sh). The full-source stage-1 is
+# mandatory on this lane, not a fallback.
+#
+# Stage-1 already provides the full dependency set from main's own requirements/ at the
+# pinned SHA. FlashInfer decision (2026-08-11): keep main's NATIVE pin
+# flashinfer-python==0.6.16.post3 + flashinfer-cubin==0.6.16.post3 (requirements/cuda.txt,
+# installed from https://flashinfer.ai/whl/). This layer therefore installs NO flashinfer —
+# unlike the 026 layer's @0472b9b3 source rebuild — and build-0261-image.sh's smoke step
+# ASSERTS the exact installed versions instead (fail the build, don't paper over it).
+#
+# This layer adds ONLY: the gx10 overlay copy (whole-file replace over the installed
+# vllm package, same rsync-style semantics as the 026 COPY) + Anemll's vendor b12x git
+# pin (UNCHANGED from upstream-026.lock) + env defaults.
+ARG VLLM_BASE
+ARG VLLM_PKG_DIR=/usr/local/lib/python3.12/dist-packages/vllm
+ARG B12X_COMMIT=7dc6fb8fcc6446ea093537d1657df81985fa5f43
+ARG DG_PIN=a6b593d2826719dcf4892609af7b84ee23aaf32a
+
+FROM ${VLLM_BASE}
+
+ARG VLLM_PKG_DIR
+ARG B12X_COMMIT
+ARG DG_PIN
+
+LABEL org.opencontainers.image.source="2xSPARK-CLUSTER/patches/vllm-0261-main-c8r"
+LABEL org.opencontainers.image.description="cand8r: c8 + #49731 revert (Markov head TP-sharded); c8 full-source base + gx10 overlay"
+
+# Version check is expected to PASS natively on this base (stage-1 installs the exact
+# requirements pin). Kept as an env default for parity with the 026 layer and the
+# compose (which passes FLASHINFER_DISABLE_VERSION_CHECK:-1 anyway) — belt-and-braces,
+# not a cover for a known mismatch.
+ENV FLASHINFER_DISABLE_VERSION_CHECK=1
+COPY overlay0261/vllm/ ${VLLM_PKG_DIR}/
+
+# DeepGEMM pin revert (2026-08-11): stage-1's vendored pin e21c821 (vllm-project fork,
+# main #51003) dropped the ENTIRE sm120 backend — 0 sm120 refs in csrc vs 13 files in the
+# old pin; GB10 dies at weight-load (layout.hpp 'Unknown SF transformation', covered by the
+# overlay's torch port) and then at the first forward pass (hyperconnection.hpp:56
+# 'Unsupported architecture' — tf32_hc_prenorm_gemm, DeepSeek V4 HC residual). Rather than
+# porting 5+ kernel files forward, swap the vendored package to the 0.26.0 prod pin
+# deepseek-ai/DeepGEMM@a6b593d2 (nv-dev) — the exact DG prod runs today; the vllm
+# deep_gemm wrapper is byte-identical between 0.26.0 and main and all 17 bound symbols
+# exist in this pin. Rebuilds the pybind11 _C.so (single g++ TU via vLLM's
+# build_deepgemm_C.py, copied verbatim from tools/) and replaces the vendored package
+# (python + JIT include/ tree) in place. Only the cp312 binding is rebuilt — the image's
+# sole interpreter is 3.12.
+COPY build_deepgemm_C.py /tmp/build_deepgemm_C.py
+RUN set -eu; \
+    apt-get update -qq && apt-get install -y -qq --no-install-recommends git ca-certificates >/dev/null && \
+    mkdir /tmp/dg && cd /tmp/dg && \
+    git init -q && git remote add origin https://github.com/deepseek-ai/DeepGEMM.git && \
+    git fetch -q --depth 1 origin ${DG_PIN} && git checkout -q FETCH_HEAD && \
+    git submodule update --init --depth 1 third-party/cutlass third-party/fmt && \
+    export CPATH="/usr/local/lib/python3.12/dist-packages/nvidia/cu13/include${CPATH:+:$CPATH}" && \
+    CUDA_LIB64="$(readlink -f /usr/local/cuda/lib64)" && ln -sf libnvrtc.so.13 "$CUDA_LIB64/libnvrtc.so" && \
+    python3 /tmp/build_deepgemm_C.py /tmp/dg /tmp/dg-out "$(command -v python3)" && \
+    DG_DST="${VLLM_PKG_DIR}/third_party/deep_gemm" && \
+    rm -rf "$DG_DST" && mkdir -p "$DG_DST/include" && \
+    cp /tmp/dg-out/_C.cpython-312-*.so "$DG_DST/" && \
+    cp /tmp/dg/deep_gemm/__init__.py "$DG_DST/" && \
+    cp -r /tmp/dg/deep_gemm/utils /tmp/dg/deep_gemm/testing /tmp/dg/deep_gemm/legacy /tmp/dg/deep_gemm/mega "$DG_DST/" && \
+    cp -r /tmp/dg/deep_gemm/include/. "$DG_DST/include/" && \
+    cp -r /tmp/dg/third-party/cutlass/include/. "$DG_DST/include/" && \
+    printf '# Pre-installed environment variables\npersistent_envs = dict()\n' > "$DG_DST/envs.py" && \
+    cd / && rm -rf /tmp/dg /tmp/dg-out /tmp/build_deepgemm_C.py && \
+    apt-get purge -y git >/dev/null && apt-get autoremove -y >/dev/null && rm -rf /var/lib/apt/lists/*
+
+# b12x install line copied VERBATIM from Dockerfile.runtime-026 (same vendor pin).
+RUN python3 -m pip install --no-cache-dir --no-deps --no-build-isolation \
+      "https://github.com/lukealonso/b12x/archive/${B12X_COMMIT}.tar.gz"
+
+ENTRYPOINT ["vllm", "serve"]

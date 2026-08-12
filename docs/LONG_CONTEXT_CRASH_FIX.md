@@ -3,7 +3,8 @@
 ## TL;DR
 
 **On the current 0.26 lane `DSPARK_SLOT_CLAMP` does nothing.** Verified 2026-08-10: a
-grep of the installed vllm package inside the running `v026-gx10-cand7-backports` image
+grep of the installed vllm package inside the running production image (cand7 check 2026-08-10;
+same no-op status on the c8r lane)
 finds **zero readers** of the variable — it is a dead env here, a legacy of the retired
 0.25.1 image lane where it was live. The crash class it guarded is handled by the gx10
 overlay itself (below). The compose still injects it (`${DSPARK_SLOT_CLAMP:-1}`) purely
@@ -30,7 +31,7 @@ step, and the installed package contains no code that consults the clamp env at 
 
 | Lane | Status |
 |------|--------|
-| **0.26 (`v026-gx10-*` images, current)** | **Legacy no-op** — zero readers in the installed package (verified 2026-08-10). Value is irrelevant. |
+| **0.26+ / c8r (`v026-gx10-*`, `v0261-main-c8r`, current)** | **Legacy no-op** — zero readers in the installed package (verified 2026-08-10 on cand7; still true on c8r). Value is irrelevant. |
 | **0.25.1 (`vgx10-011-pr47356`, rollback)** | **Live** — `1` (default) clamps stale/out-of-range draft-KV slot ids; `0` is detect+log only (expect crashes if it fires). |
 
 ## When you'd touch it

@@ -5,7 +5,8 @@
 # This is the pre-2026-07-15 build path, kept intact for rollback: the pinned
 # tonyd2wild recipe (stage-c) base + the FlashInfer PR #3615 sampler-hang fix
 # as a thin final layer. It is NOT the current default — bringup/05-build-image.sh
-# builds the vLLM 0.26.0 gx10-overlay (cand7) lane. See docs/08, docs/10, docs/13.
+# builds the full-source c8r lane (docs/14). Cand7 rollback:
+# bringup/05-build-image.prior-0.26-cand7.sh. See docs/08, docs/10, docs/13, docs/14.
 #
 # To use this lane, first swap cluster.env section 4 to the ROLLBACK block
 # (uncomment the prior 0.21.x pins there), then run this script instead of 05.

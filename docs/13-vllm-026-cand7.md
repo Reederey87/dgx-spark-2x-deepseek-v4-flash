@@ -1,5 +1,9 @@
 # The 0.26.0 cand7 update — post-release backports round 2 (2026-08-10)
 
+> **Status (2026-08-11):** cand7 is the **first image rollback rung**, not the live
+> production default. Production is the full-source c8r lane — see
+> [docs/14](14-vllm-027-c8r.md). This page remains the cand7 selection and gate record.
+
 The serving image moved from `v026-gx10-cand4-backports` to
 **`v026-gx10-cand7-backports`** on 2026-08-10. This page records how the picks were
 selected, what was rejected and why, the gate that qualified them, and the operational
