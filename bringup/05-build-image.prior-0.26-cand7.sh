@@ -18,6 +18,14 @@ fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
 BASE_PINNED="${BASE_IMAGE_REF}@${BASE_IMAGE_DIGEST}"
 
+# Guard: this script builds the cand7 ROLLBACK lane, which needs cluster.env section 4
+# flipped to the rung-1 block first. Run against the default (c8r) cluster.env,
+# DSPARK_VLLM_BASE_IMAGE is the local full-source stage-1 tag and the overlay build
+# would die much later with a misleading "patch does not apply". Fail fast instead.
+[ "$DSPARK_VLLM_BASE_IMAGE" = "$BASE_PINNED" ] \
+  || fail "DSPARK_VLLM_BASE_IMAGE is '$DSPARK_VLLM_BASE_IMAGE', not the pinned v0.26.0 base" \
+          "flip runtime/cluster.env section 4 to the cand7 ROLLBACK block before running this script"
+
 ssh "$CLUSTER_USER@$HEAD_HOST" \
   "BASE_PINNED='$BASE_PINNED' bash -s" <<'REMOTE' \
   || fail "base image pull/verify failed on $HEAD_HOST" "check control-host SSH + registry reachability"

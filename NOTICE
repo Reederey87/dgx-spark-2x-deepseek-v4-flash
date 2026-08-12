@@ -4,9 +4,12 @@ Copyright 2026 the dgx-spark-2x-deepseek-v4-flash contributors
 Licensed under the Apache License, Version 2.0 (see LICENSE).
 
 This project is deployment/orchestration tooling. It does NOT redistribute the
-model weights, the serving container image, or the upstream vLLM/kernel source
-it builds on — those are pulled at build time from their own repositories, each
-under its own license. This project orchestrates and documents them.
+model weights, the serving container image, or the upstream kernel packages it
+builds on — those are pulled at build time from their own repositories, each
+under its own license. One exception: patches/vllm-0261-main-c8r/overlay0261/
+redistributes modified copies of 17 vLLM source files (Apache-2.0; upstream
+SPDX license headers retained in each file) as the reviewable GB10 overlay
+applied at image build. Everything else this project orchestrates and documents.
 
 Attributed upstreams:
 

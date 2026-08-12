@@ -18,9 +18,11 @@ layer (`Dockerfile.runtime-0261`) then applies the overlay and pins the vendored
 dependency pins come from main's own `requirements/` at the SHA — see
 [upstream-0261.lock](upstream-0261.lock).
 
-On top of the pinned tree, `overlay0261/vllm/` carries **17 whole-file overlays** (14 ported +
-3 from the #49731 revert), each documented decision-by-decision in
-[PORT-NOTES.md](PORT-NOTES.md) (3-way merges `git merge-file <main> <v0.26.0> <c7-overlay>`):
+On top of the pinned tree, `overlay0261/vllm/` carries **17 whole-file overlays** — 14 from
+the port (13 three-way merges `git merge-file <main> <v0.26.0> <c7-overlay>` + the DeepGEMM
+SF-layout hotfix), each documented decision-by-decision in [PORT-NOTES.md](PORT-NOTES.md),
+plus the 3 files of the #49731 revert (documented in [docs/14](../../docs/14-vllm-027-c8r.md),
+not PORT-NOTES):
 
 - **the `dspark-vllm-gx10` GB10 overlay** (Anemll, see NOTICE), forward-ported from the
   0.26.0 lane: `nvfp4_ds_mla` KV-quant plumbing, the b12x MXFP4 MoE backend, the FlashInfer
@@ -51,6 +53,7 @@ Runs from the control host; stage-1 is a **multi-hour** nvcc build on the head n
 cluster must be stopped (nvcc does not fit next to the serving pool on the 121 GiB UMA):
 
 ```bash
+git clone https://github.com/vllm-project/vllm.git ~/vllm   # one-time, control host
 git -C ~/vllm worktree add ~/vllm-0261-main-wt 48bada6ea4   # one-time; script never creates refs
 bash build-0261-image.sh --distribute      # stage-1 + runtime layer + smoke + worker push + parity assert
 # overlay-only iteration (hours → minutes): reuse the existing stage-1:

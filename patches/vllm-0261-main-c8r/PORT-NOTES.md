@@ -10,7 +10,10 @@ Forward-port of the production 2xSPARK-CLUSTER vLLM source overlay.
   500 on non-object JSON bodies (#51654)")
 - Method per file: 3-way `git merge-file -p <main> <v0.26.0> <c7>`, conflicts
   resolved per policy; every output passes `python3 -m py_compile`.
-- Result: **13 whole-file overlays** (15 c7 files − 2 dropped-native).
+- Result of the port: **13 whole-file overlays** (15 c7 files − 2 dropped-native);
+  §14 later adds a 14th (`utils/deep_gemm.py`, post-build hotfix), and the #49731
+  revert adds 3 more (documented in docs/14, not here) → **17 shipped** in
+  `overlay0261/vllm/`.
   Production value carried: `nvfp4_ds_mla` dtype plumbing, Anemll SM120/121
   (B12X) MoE kernel adaptations, local guards.
 
@@ -248,7 +251,8 @@ No conflict could not be resolved cleanly.
 
 ## Verification
 
-- `python3 -m py_compile`: **13/13 outputs pass**.
+- `python3 -m py_compile`: **13/13 port outputs pass** (the §14 hotfix and the 3
+  revert files are additionally compiled by the image-build smoke).
 - Every output diffed against `git show 48bada6ea4:<path>` to confirm the
   delta is exactly the documented hunks (nothing else carried, nothing lost).
 - Shipped `overlay026/` tree vs `gx10-overlay-026-c7`: identical for all 15
@@ -313,8 +317,9 @@ Smoke coverage added to build-0261-image.sh: cp312 `_C.so` presence, `sm120` mar
 grep over the vendored `include/` (a6b593d2 = 11 files, e21c821 = 0), and a --gpus=all
 import + hasattr probe (`tf32_hc_prenorm_gemm`, `transform_sf_into_required_layout`).
 
-DG JIT cache note: `DG_JIT_CACHE_DIR` defaults to `$VLLM_CACHE_ROOT/deep_gemm`, i.e. the
-lane's `-c8` root — kernels JIT'd from e21c821 sources during the failed boots linger
+DG JIT cache note: `DG_JIT_CACHE_DIR` defaults to `$VLLM_CACHE_ROOT/deep_gemm` — under this
+kit's lane root that is `/cache/huggingface/vllm-cache-c8r/deep_gemm` — kernels JIT'd from
+e21c821 sources during the failed boots linger
 there; wipe `$VLLM_CACHE_ROOT/deep_gemm` on both nodes before the first post-swap boot
 (one-time; the swap changes kernel sources, and stale same-name entries are not worth
 reasoning about).

@@ -1,11 +1,28 @@
 # dgx-spark-2x-deepseek-v4-flash
 
-Two desk-side **NVIDIA DGX Sparks**, one QSFP cable, and this kit — that's everything you
-need to serve **DeepSeek-V4-Flash-0731** (a 284B-parameter MoE, ~13B active per token) at
-up to **1M tokens of context**. vLLM splits the model across both boxes (tensor-parallel
-2), and the head node exposes a plain OpenAI-compatible API on its loopback
-(`127.0.0.1:8000`). This repo is the full production recipe: configs, scripts, systemd
-units, image build, and docs that explain *why* every knob is set the way it is.
+Two desk-side **NVIDIA DGX Sparks**, one QSFP cable, a control host with SSH to both, and
+this kit — that's what you need to serve **DeepSeek-V4-Flash-0731** (a 284B-parameter MoE,
+~13B active per token) at up to **1M tokens of context**. vLLM splits the model across both
+boxes (tensor-parallel 2), and the head node exposes a plain OpenAI-compatible API on its
+loopback (`127.0.0.1:8000`). This repo is the full production recipe: configs, scripts,
+systemd units, image build, and docs that explain *why* every knob is set the way it is.
+In a hurry? → [Quickstart](#quickstart).
+
+> ⚠️ **Experimental / n=1.** Everything here was validated on **one** 2× GB10 pair — every
+> number is an observation, not a guarantee; yours will vary. The full-source image build is
+> multi-hour nvcc with serving stopped. Throughput tables are short-context; decode rate at
+> 500K+ context is unmeasured on this lane (`runtime/bench-decode-depth.py` closes that).
+> The DSpark/GB10 stack is fast-moving and largely single-author. The current c8r lane
+> builds from source (the FlashInfer wheel and the PyTorch builder base image are the
+> prebuilt exceptions); the older rollback lanes (0.25.1, 0.21.x) additionally depend on
+> prebuilt, non-source-buildable kernels and images.
+
+Name decoder (this kit's jargon, used throughout):
+
+- **gx10** — the community GB10 port lineage this kit builds on (anemll's `dspark-vllm-gx10` overlay).
+- **DSpark** — DeepSeek's speculative-decoding draft-head family used by V4-Flash (also the name of the preview checkpoint).
+- **c8r** — the current image lane: full-source vLLM `main` @48bada6ea4, i.e. "0.27-content". One thing, three spellings: image tag `v0261-main-c8r`, prose "0.27-content", receipt [docs/14](docs/14-vllm-027-c8r.md).
+- **cand7 / cand4** — the 0.26.0 thin-overlay image lanes, now the first rollback rungs.
 
 **Current production stack (2026-08-11):** full-source vLLM **main @48bada6ea4**
 (0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert → image
@@ -34,14 +51,16 @@ down so someone else can reproduce it without rediscovering the traps.
 
 | Benefit | What you actually get |
 |---|---|
-| **End-to-end reproducibility** | Numbered `bringup/00–09` path from bare nodes → fabric → image → weights → smoke → systemd. Hostnames are the only required edit (`runtime/cluster.env.example`). |
+| **End-to-end reproducibility** | Numbered `bringup/00–09` path from bare nodes → fabric → image → weights → smoke → systemd. Hostnames are the only edit needed before bring-up (`runtime/cluster.env.example`); the NCCL bench adds one more (its winning RDMA arm). |
+| **Hardware / host prerequisites** | 2× DGX Spark (GB10) with matched firmware, one QSFP 200GbE cable, Docker, a control host with SSH to both — plus **~155.4 GiB of weights on *each* node** and headroom for the stage-1 build. |
+| **Time to first `/health`** | Half a day to a long day on a clean matched-firmware pair: fabric + NCCL gates, multi-hour full-source stage-1 (serving stopped), ~155 GiB weight pull + head→worker rsync, ~12 min cold compile on first boot. The cand7 thin-image rollback is the faster rebuild path. |
 | **Production-shaped, not demo-shaped** | Boot-persistent user units, inference watchdog, metrics timer, preflight invariant checks, ordered worker-before-head restarts, loopback-only API by default. |
 | **Evidence-gated knobs** | Every non-obvious default (MTP n=2, `--no-async-scheduling`, KV byte pin, attention backend, cache-root isolation) has a measured A/B and a doc page. You can re-run the gates on your hardware. |
 | **Auditable trust surface** | Public HF weights + pinned upstream vLLM SHA + overlay you can read. No kit-side telemetry, no opaque registry image as the only option. |
 | **Documented rollback rungs** | Weights (0731 ↔ preview), image (c8r → cand7 → cand4 → 0.25.1 → 0.21), and cache roots that *must* move with the image — spelled out so a bad upgrade is reversible. |
 | **Fabric that is measured** | Dual-twin QSFP RoCEv2 A/B (`bringup/04`), NCCL gate ≥15 GB/s, proven ~23 GB/s dual-rail path — not "plug a cable and pray." |
 | **Ops that survive Monday** | Warm-up after restart, swap/churn observability, optional Telegram alerts, Xid evidence capture that never restarts vLLM for you. |
-| **Agent-ready API surface** | Thinking on by default (`message.reasoning`), DeepSeek-V4 tool parser, 1M context, prefix caching — the profile agents actually need. |
+| **Agent-ready API surface** | Thinking on by default (`message.reasoning`), DeepSeek-V4 tool parser, 1M context, prefix caching — the profile agents actually need. (Retrieval at ~944K is measured; decode *rate* at 500K+ depth is not — see the [Performance](#performance) callout.) |
 
 What this is **not**: a guarantee that your pair will hit the same tok/s, a hosted image
 registry product, or a substitute for reading the gotchas in `docs/05` and `docs/14`. It
@@ -54,7 +73,7 @@ Two desktop boxes and one cable get you:
 
 - **A 284B MoE with a 1M context window, at home.** The two Sparks pool ~242 GiB of
   unified memory; NVFP4 KV + the c8r packing path stretches that into a
-  **3,027,217-token KV pool** (~2.89× concurrent full-length 1M sessions). Long-context
+  **3,027,217-token KV pool** (~2.89× a full 1M window of KV capacity). Long-context
   agentic work stops being theoretical on this hardware.
 - **Real speed, measured — not claimed.** ~34 tok/s single stream, ~88 tok/s aggregate at
   concurrency 8 on the warm c8r gate (throughput-tie vs the prior 0.26 cand7 lane), with
@@ -84,12 +103,6 @@ Everything you need is **public — no accounts, no tokens, anywhere**:
 Two honest caveats: every number here was measured on one 2× pair — yours will vary —
 and the full-source stage-1 is multi-hour nvcc (cluster stopped). The thinner 0.26 cand7
 image remains a supported rollback if you need a faster rebuild path.
-
-> ⚠️ **Experimental.** The DSpark / GB10 serving stack is fast-moving, largely
-> single-author, and partly dependent on prebuilt (non-source-buildable) kernels and
-> images. Treat this as experimental and validate on your own hardware behind each
-> upstream's own smoke/sanity tests. All performance numbers here are **observations on
-> one 2× GB10 pair — not guarantees. Yours will vary.**
 
 ---
 
@@ -156,7 +169,9 @@ bash bringup/03-build-nccl-tests.sh  # NCCL v2.30u1 + nccl-tests at sm_121, both
 bash bringup/04-run-nccl-bench.sh    # A/B the RDMA arms; put the winner in cluster.env (gate ≥15 GB/s)
 
 # Image build: full-source stage-1 is multi-HOUR nvcc — stop any serving containers first.
-# One-time: git -C ~/vllm worktree add ~/vllm-0261-main-wt 48bada6ea4
+# One-time: clone vLLM on the control host, then pin a worktree at the c8r SHA:
+#   git clone https://github.com/vllm-project/vllm.git ~/vllm
+#   git -C ~/vllm worktree add ~/vllm-0261-main-wt 48bada6ea4
 bash bringup/05-build-image.sh --distribute   # c8r build + worker push; or omit --distribute and run 06
 # bash bringup/06-distribute-image.sh         # only if you skipped --distribute above
 bash bringup/07-download-weights.sh  # pull public weights to the head's token-free HF cache
@@ -314,8 +329,9 @@ chunk them. See `docs/12`.
 ## License & attribution
 
 Licensed under Apache-2.0 (see [LICENSE](LICENSE)). This kit is orchestration and documentation
-only — it vendors no upstream source; the serving image is built from a pinned upstream tree and
-the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
+plus one reviewable source overlay: `patches/vllm-0261-main-c8r/overlay0261/` carries modified
+copies of 17 vLLM files (Apache-2.0, upstream SPDX headers retained) that the image build lays
+over the pinned upstream tree; the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
 the recipe/image, and the GB10 kernels) each ship under their own licenses; see [NOTICE](NOTICE) for
 the attribution required by those licenses. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

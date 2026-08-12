@@ -105,10 +105,16 @@ wait_for "$BOOT_DEP_WAIT_SECS" "docker daemon answering" docker info
 docker image inspect "$DSPARK_VLLM_IMAGE" >/dev/null 2>&1 \
   || { echo "preflight FAIL: image $DSPARK_VLLM_IMAGE not present" >&2; exit 1; }
 
-# Weights present in the token-free cache (served by HF id, offline mode).
+# Weights present in the token-free cache (served by HF id, offline mode). Check the
+# snapshot refs/main actually resolves to — HF_HUB_OFFLINE=1 startup goes through that
+# ref, so a leftover snapshot from an older revision must not satisfy this gate while
+# the ref is missing or dangling (the LocalEntryNotFoundError trap, see bringup/07).
 MODEL_HUB_DIR="$HF_CACHE/hub/models--${DSPARK_MODEL//\//--}"
-[ -d "$MODEL_HUB_DIR" ] && find "$MODEL_HUB_DIR" -name config.json -print -quit | grep -q . \
-  || { echo "preflight FAIL: weights not found under $MODEL_HUB_DIR" >&2; exit 1; }
+[ -f "$MODEL_HUB_DIR/refs/main" ] \
+  || { echo "preflight FAIL: $MODEL_HUB_DIR/refs/main missing — offline revision resolution will fail; re-run bringup/07 (and 08 on the worker)" >&2; exit 1; }
+MODEL_SNAP_DIR="$MODEL_HUB_DIR/snapshots/$(cat "$MODEL_HUB_DIR/refs/main")"
+[ -f "$MODEL_SNAP_DIR/config.json" ] \
+  || { echo "preflight FAIL: refs/main points at $MODEL_SNAP_DIR but config.json is not there — re-run bringup/07 (and 08 on the worker)" >&2; exit 1; }
 
 # A stale container from a previous run must not block compose.
 docker rm -f vllm-dsv4 >/dev/null 2>&1 || true

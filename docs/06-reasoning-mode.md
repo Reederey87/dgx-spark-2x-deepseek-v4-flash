@@ -59,9 +59,14 @@ garble gate is the accept criterion.
 
 `reasoning_effort`: `high` (default) or `max`. `max` prepends a maximize-depth instruction and needs
 `--max-model-len >= 393216` (the 1M default clears it) — reserve it for low-concurrency calls.
-⚠ **The wrapper's effort mapping is coarse** (vendored 0.26 `vllm/tokenizers/deepseek_v4.py`): only
-`none` / `max` / `xhigh` are special-cased — **any other string, including `low` and `medium`,
-silently runs as `high`.** A `low` ask is not an error, it just isn't low.
+⚠ **The wrapper's effort mapping is coarse and lane-dependent** (`vllm/tokenizers/deepseek_v4.py`):
+- **c8r lane (current, main @48bada6ea4):** `none` turns thinking off, `max` is `max`,
+  `low`/`minimal`/`medium` map to `low`, and **any other string — including `xhigh` —
+  silently runs as `high`.**
+- **cand7 rollback lane (vendored 0.26):** only `none` / `max` / `xhigh` are special-cased —
+  **any other string, including `low` and `medium`, silently runs as `high`.** A `low` ask is
+  not an error there, it just isn't low.
+Re-check this mapping after any image bump; it has already changed once between lanes.
 
 ## The `max_tokens` trap
 

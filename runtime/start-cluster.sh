@@ -9,10 +9,13 @@ source "$KIT/cluster.env"
 HEALTH_WAIT_SECS="${HEALTH_WAIT_SECS:-1500}"   # engine + weights load can take 10-20 min
 
 echo "== starting worker unit on $WORKER_HOST"
-ssh "$CLUSTER_USER@$WORKER_HOST" 'systemctl --user start vllm-dsv4-worker.service'
+# reset-failed first: a unit in start-limit-hit (the flapping case preflight repairs)
+# would otherwise make systemctl start fail and set -e abort bring-up before the head
+# preflight's recovery path can ever run.
+ssh "$CLUSTER_USER@$WORKER_HOST" 'systemctl --user reset-failed vllm-dsv4-worker.service 2>/dev/null || true; systemctl --user start vllm-dsv4-worker.service'
 
 echo "== starting head unit on $HEAD_HOST (its preflight waits for the worker)"
-ssh "$CLUSTER_USER@$HEAD_HOST" 'systemctl --user start vllm-dsv4-head.service'
+ssh "$CLUSTER_USER@$HEAD_HOST" 'systemctl --user reset-failed vllm-dsv4-head.service 2>/dev/null || true; systemctl --user start vllm-dsv4-head.service'
 
 echo "== waiting for API health on $HEAD_HOST:$API_PORT (up to ${HEALTH_WAIT_SECS}s)"
 deadline=$(( $(date +%s) + HEALTH_WAIT_SECS ))

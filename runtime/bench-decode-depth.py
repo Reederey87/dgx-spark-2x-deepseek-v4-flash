@@ -87,6 +87,8 @@ def stream_case(base_url, model, prompt, max_tokens, timeout):
     deltas = []
     usage = None
     finish_reason = None
+    n_chunks = 0
+    saw_done = False
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         for raw in resp:
             now = time.perf_counter()
@@ -97,11 +99,14 @@ def stream_case(base_url, model, prompt, max_tokens, timeout):
                 continue
             data = line[5:].strip()
             if data == "[DONE]":
+                saw_done = True
                 break
             try:
                 event = json.loads(data)
             except ValueError:
                 continue
+            if event.get("error"):
+                raise RuntimeError(f"stream error event: {event['error']}")
             if event.get("usage"):
                 usage = event["usage"]
             choices = event.get("choices") or []
@@ -111,24 +116,33 @@ def stream_case(base_url, model, prompt, max_tokens, timeout):
                 finish_reason = choices[0]["finish_reason"]
             delta = choices[0].get("delta") or {}
             if delta.get("content") or delta.get("reasoning") or delta.get("reasoning_content"):
+                n_chunks += 1
                 if first is None:
                     first = now
                 else:
                     deltas.append(now - last)
                 last = now
+    if not saw_done:
+        raise RuntimeError("stream ended before [DONE] — truncated/aborted response, rep discarded")
     done = time.perf_counter()
     usage = usage or {}
     prompt_tokens = usage.get("prompt_tokens", 0)
     completion_tokens = usage.get("completion_tokens", 0)
     ttft = (first or done) - t0
     decode_window = (last - first) if (first is not None and last is not None) else 0.0
-    decode_tok_s = ((completion_tokens - 1) / decode_window
-                    if completion_tokens > 1 and decode_window > 0 else None)
+    # Spec decode (DSpark MTP n=2) commits multiple tokens per SSE chunk. The first
+    # chunk's tokens land AT `first`, outside the [first, last] window, so subtract the
+    # mean per-chunk share rather than assuming the first chunk carried exactly 1 token
+    # (that assumption biases decode tok/s high on this lane).
+    decode_tokens = completion_tokens * (1 - 1 / n_chunks) if n_chunks > 1 else 0
+    decode_tok_s = (decode_tokens / decode_window
+                    if decode_tokens > 0 and decode_window > 0 else None)
     return {"ttft_s": round(ttft, 2),
             "elapsed_s": round(done - t0, 2),
             "prompt_tokens": prompt_tokens,
             "prefill_tok_s": round(prompt_tokens / ttft, 1) if ttft > 0 else None,
             "completion_tokens": completion_tokens,
+            "stream_chunks": n_chunks,
             "decode_tok_s": round(decode_tok_s, 2) if decode_tok_s else None,
             "median_interchunk_ms": round(statistics.median(deltas) * 1000, 1) if deltas else None,
             "finish_reason": finish_reason}
@@ -169,6 +183,8 @@ def main():
     p.add_argument("--out", default=None,
                    help="results JSON path (default: results/decode-depth-<timestamp>.json under cwd)")
     args = p.parse_args()
+    if args.reps < 1:
+        p.error("--reps must be >= 1")
 
     out = args.out or os.path.join("results", f"decode-depth-{time.strftime('%Y%m%dT%H%M%S')}.json")
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
@@ -197,6 +213,10 @@ def main():
                 result = stream_case(args.url, args.model, prompt, args.max_tokens,
                                      args.request_timeout)
                 result["nonce"] = nonce
+                # fit_prompt's raw-text token count (usage prompt_tokens additionally
+                # includes the chat template + appended instruction) — keeps a
+                # non-converged fit identifiable from the results file alone.
+                result["fitted_prompt_tokens"] = actual
             except Exception as exc:  # keep later depths running; the error is in the JSON
                 result = {"nonce": nonce, "error": f"{type(exc).__name__}: {exc}"}
             case["reps"].append(result)
@@ -212,6 +232,10 @@ def main():
         print(f"depth={depth}: decode tok/s median={s['median']} min={s['min']} max={s['max']}",
               file=sys.stderr)
 
+    failures = sum(1 for c in report["cases"] for r in c["reps"] if "error" in r)
+    if failures:
+        print(f"bench-decode-depth: done with {failures} failed rep(s) -> {out}", file=sys.stderr)
+        sys.exit(1)
     print(f"bench-decode-depth: done -> {out}", file=sys.stderr)
 
 

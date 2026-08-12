@@ -17,6 +17,17 @@ for script in "${scripts[@]}"; do
 done
 echo "ok: bash syntax (${#scripts[@]} scripts)"
 
+# Python syntax sweep for the kit's own tooling (runtime/ + bringup/ + tests/; the
+# vendored overlay .py files are py_compile-verified by the image build instead).
+py_scripts=()
+while IFS= read -r script; do
+  py_scripts+=("$script")
+done < <(find bringup runtime tests -type f -name '*.py' -print | sort)
+if [ "${#py_scripts[@]}" -gt 0 ]; then
+  python3 -m py_compile "${py_scripts[@]}"
+  echo "ok: python syntax (${#py_scripts[@]} scripts)"
+fi
+
 # Production defaults: full-source c8r lane (docs/14).
 need 'DSPARK_VLLM_BASE_IMAGE=vllm-dspark-src:v0261-main-c8' runtime/cluster.env.example
 need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v0261-main-c8r' runtime/cluster.env.example

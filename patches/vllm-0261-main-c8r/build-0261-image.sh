@@ -60,8 +60,16 @@ REMOTE_HOME="$(ssh "$HEAD_SSH" 'printf %s "$HOME"')"
 REMOTE_SRC="$REMOTE_HOME/build/vllm-0261-main-c8"          # stage-1 build context on the head (shared with the c8 lane — REUSED by --runtime-only)
 REMOTE_RUNTIME="$REMOTE_HOME/build/vllm-0261-main-c8r-runtime"  # runtime-layer context (Dockerfile + overlay)
 
-SRC_TAG="${SRC_TAG:-vllm-dspark-src:v0261-main-c8}"       # c8 stage-1 base (already on the head node)
-FINAL_TAG="${FINAL_TAG:-vllm-dspark-runtime:v0261-main-c8r}"
+# Default to the tags cluster.env configures (falling back to the canonical literals),
+# so a retagged DSPARK_VLLM_IMAGE/BASE_IMAGE produces the image preflight will accept
+# instead of silently building the hardcoded names.
+SRC_TAG="${SRC_TAG:-${DSPARK_VLLM_BASE_IMAGE:-vllm-dspark-src:v0261-main-c8}}"
+FINAL_TAG="${FINAL_TAG:-${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:v0261-main-c8r}}"
+case "$SRC_TAG" in
+  vllm/vllm-openai*)
+    echo "FAIL: SRC_TAG resolves to the registry 0.26 base ($SRC_TAG) — cluster.env section 4 is flipped to a rollback block. Restore the c8r defaults (or pass SRC_TAG=) before building the full-source lane." >&2
+    exit 1 ;;
+esac
 
 DISTRIBUTE=0
 for arg in "$@"; do

@@ -13,7 +13,10 @@ ssh "$CLUSTER_USER@$WORKER_HOST" "mkdir -p '$HF_CACHE/hub'" \
   || fail "could not create worker HF hub dir" "check worker SSH and permissions"
 echo "ok: worker HF hub dir exists"
 
-ssh "$CLUSTER_USER@$HEAD_HOST" "rsync -a --partial --info=progress2 '$remote_model_dir' '$CLUSTER_USER@$WORKER_R1:$HF_CACHE/hub/'" \
+# --delete is scoped to the transferred model dir only: without it, a stale worker file
+# (e.g. an older snapshot left by a revision flip) makes the file/byte parity gate below
+# permanently unsatisfiable — the checksum retry re-copies but never removes.
+ssh "$CLUSTER_USER@$HEAD_HOST" "rsync -a --delete --partial --info=progress2 '$remote_model_dir' '$CLUSTER_USER@$WORKER_R1:$HF_CACHE/hub/'" \
   || fail "weights rsync failed" "verify head-to-worker QSFP SSH and disk space"
 echo "ok: weights rsync completed"
 
@@ -35,7 +38,7 @@ echo "worker weights: $worker_stats"
 
 if [ "$head_stats" != "$worker_stats" ]; then
   echo "WARN: weight stats mismatch; retrying rsync with checksum" >&2
-  ssh "$CLUSTER_USER@$HEAD_HOST" "rsync -a -c --partial --info=progress2 '$remote_model_dir' '$CLUSTER_USER@$WORKER_R1:$HF_CACHE/hub/'" \
+  ssh "$CLUSTER_USER@$HEAD_HOST" "rsync -a -c --delete --partial --info=progress2 '$remote_model_dir' '$CLUSTER_USER@$WORKER_R1:$HF_CACHE/hub/'" \
     || fail "checksum rsync failed" "verify QSFP SSH and disk space"
   head_stats="$(stats "$HEAD_HOST")" || fail "could not re-stat head weights" "verify source dir"
   worker_stats="$(stats "$WORKER_HOST")" || fail "could not re-stat worker weights" "verify destination dir"
@@ -51,8 +54,13 @@ echo "ok: weight stats match"
 ssh "$CLUSTER_USER@$WORKER_HOST" "DIR='$remote_model_dir' bash -s" <<'REMOTE' \
   || fail "worker shard verification failed" "rerun 08-distribute-weights.sh after checking disk space"
 set -euo pipefail
-index="$(find "$DIR/snapshots" -name model.safetensors.index.json -print -quit)"
-[ -n "$index" ] || { echo "FAIL: model.safetensors.index.json missing under $DIR/snapshots" >&2; exit 1; }
+# Resolve THE snapshot offline serving will use (refs/main), not whichever snapshot
+# find(1) hits first — same rule as 07's head-side check.
+[ -f "$DIR/refs/main" ] || { echo "FAIL: $DIR/refs/main missing on the worker — rerun 07 then 08" >&2; exit 1; }
+snap_dir="$DIR/snapshots/$(cat "$DIR/refs/main")"
+[ -d "$snap_dir" ] || { echo "FAIL: refs/main points at a missing snapshot ($snap_dir)" >&2; exit 1; }
+index="$snap_dir/model.safetensors.index.json"
+[ -f "$index" ] || { echo "FAIL: model.safetensors.index.json missing under $snap_dir" >&2; exit 1; }
 missing_shards="$(python3 - "$index" <<'PY'
 import json, os, sys
 index_path = sys.argv[1]
