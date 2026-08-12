@@ -1,7 +1,9 @@
-# vLLM 0.26.0 gx10-overlay kit (the cand7 production lane)
+# vLLM 0.26.0 gx10-overlay kit (the cand7 lane — first image rollback)
 
-**Status: this is the current production image recipe (promoted 2026-08-10).** It supersedes
-cand4 (promoted 2026-07-28, kept as the first image rollback) and the 0.25.1 lane
+**Status: superseded 2026-08-11 — kept as the first image rollback rung.** The current
+production recipe is the full-source main @48bada6ea4 lane in
+[patches/vllm-0261-main-c8r/](../vllm-0261-main-c8r/) (see docs/14). This cand7 lane was
+promoted 2026-08-10, superseding cand4 (2026-07-28) and the 0.25.1 lane
 (`patches/vllm-pr47356-vgx10/`).
 
 ## What & why

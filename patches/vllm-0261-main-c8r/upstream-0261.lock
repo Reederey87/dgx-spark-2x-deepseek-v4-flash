@@ -1,0 +1,27 @@
+# Pin set for the cand8r build (patches/vllm-0261-main-c8r/, 2026-08-11): FULL-SOURCE vLLM
+# main + gx10 GB10 overlay. Unlike upstream-026.lock there is NO official arm64 base
+# image for this ref — stage-1 is upstream docker/Dockerfile (--target vllm-openai)
+# built from the pinned tree, so this lock pins a COMMIT on main, not a release tag.
+VLLM_REPOSITORY=https://github.com/vllm-project/vllm.git
+VLLM_REF=main
+VLLM_COMMIT=48bada6ea49ad7f3ecbe03128aa76562089c8b00   # v0.26.1rc0-590-g48bada6ea4 (2026-08-11)
+# Tree = the pinned checkout (prepared worktree — build-0261-image.sh SRC_TREE; the
+# script never creates git refs) + overlay0261/vllm/ applied whole-file via rsync -a.
+# Source is rsynced from the control host, not cloned from GitHub (upstream-026.lock precedent).
+TORCH_CUDA_ARCH_LIST=12.1a   # GB10 sm_121a; stage-1 build-arg spelling: torch_cuda_arch_list=12.1a
+# arm64 stage-1 base (2026-08-11 fix): the Dockerfile default pytorch/manylinux2_28-builder
+# is x86_64-only ("no match for platform in manifest"). Upstream's arm64 lane
+# (.buildkite/image_build/image_build_arm64.sh) swaps in the aarch64 builder:
+BUILD_BASE_IMAGE=pytorch/manylinuxaarch64-builder:cuda13.0   # + --platform linux/arm64
+# FlashInfer = main's NATIVE pin at the SHA (requirements/cuda.txt lines 16-18, installed
+# by stage-1 from --extra-index-url https://flashinfer.ai/whl/). Decision 2026-08-11:
+# do NOT carry the 026 layer's @0472b9b3 source rebuild; the runtime layer installs no
+# flashinfer at all — build-0261-image.sh's smoke ASSERTS these exact versions instead.
+FLASHINFER_PYTHON=0.6.16.post3
+FLASHINFER_CUBIN=0.6.16.post3
+# Vendor pin, UNCHANGED from upstream-026.lock (same MXFP4 MoE kernel lineage as prod):
+B12X_COMMIT=7dc6fb8fcc6446ea093537d1657df81985fa5f43
+# ALL other deps (torch, nvidia-cutlass-dsl, quack, tokenspeed-mla, tilelang, cuda-python,
+# apache-tvm-ffi, …) come from main's own requirements/ at the pinned SHA — deliberately
+# NOT re-pinned here (the upstream-026.lock "provided by upstream stage-1" note applies
+# the same way; inventing versions would fight the base).

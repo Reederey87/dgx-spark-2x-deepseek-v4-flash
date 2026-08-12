@@ -97,10 +97,12 @@ single-stream output under churn, quality-neutral on GSM8K / MATH / HumanEval. C
 **NVFP4 + MTP compatibility.** Designed for exactly this substrate — compatible with
 `nvfp4_ds_mla` KV and MTP speculative decoding.
 
-**Related guard.** This patch is what makes the draft-KV slot mapping request-stable; the
-`DSPARK_SLOT_CLAMP=1` guard in [`docs/LONG_CONTEXT_CRASH_FIX.md`](./LONG_CONTEXT_CRASH_FIX.md)
-is the belt-and-suspenders pair that clamps any stale slot id that still survives into a
-long-context step. Keep both on.
+**Related guard.** This patch is what makes the draft-KV slot mapping request-stable; on
+the retired 0.25.1 lane the `DSPARK_SLOT_CLAMP=1` guard in
+[`docs/LONG_CONTEXT_CRASH_FIX.md`](./LONG_CONTEXT_CRASH_FIX.md) paired with it to clamp any
+stale slot id that still survived into a long-context step. On the 0.26 lane the mapping
+above closes that window at the source and the clamp env has **zero readers** in the
+installed package — a legacy no-op kept in the compose for rollback compatibility.
 
 ## Feature 2 — "dual cache"
 
@@ -227,8 +229,9 @@ draft of length 5. The fix, which is the current default, is:
 garble-clean, so draft length alone was not the corruption cause. It still lost: the KV pool
 fell 1.716M → 1.578M, later draft-position acceptance decayed to 16.6% / 8.8%, and neither
 single-stream nor concurrent throughput improved enough to pay for it. Production therefore
-keeps MTP=3. This narrows the same mismatch window that `DSPARK_SLOT_CLAMP`
-guards — see [`docs/LONG_CONTEXT_CRASH_FIX.md`](./LONG_CONTEXT_CRASH_FIX.md). If you still see
+keeps MTP=3. This narrows the same mismatch window that the retired 0.25.1 lane's
+`DSPARK_SLOT_CLAMP` guarded (a legacy no-op on 0.26 —
+see [`docs/LONG_CONTEXT_CRASH_FIX.md`](./LONG_CONTEXT_CRASH_FIX.md)). If you still see
 garbled output, walk the ladder in [`docs/05-troubleshooting.md`](./05-troubleshooting.md).
 
 The default profile has **reasoning enabled** and uses the official V4-Flash reasoning point
@@ -269,8 +272,9 @@ tradeoff, not a free upgrade — if you're chasing decode throughput, this is a 
 **Historical note (0.21.x era):** this repo originally pinned the tonyd2wild recipe +
 `dspark-nvfp4-stage-c-fi3615` image as the proven default. That lane was superseded by the
 0.25.1 lane on 2026-07-15 ([08](08-optimization-and-vllm-025.md)) and then by vLLM 0.26.0
-([10](10-vllm-026-rebase.md)) — the current image is `v026-gx10-cand7-backports`
-([13](13-vllm-026-cand7.md)); the 0.21.x pins survive only as a commented rollback block in
+([10](10-vllm-026-rebase.md)) — the current image is `v0261-main-c8r`
+([14](14-vllm-027-c8r.md)); cand7 (`v026-gx10-cand7-backports`, [13](13-vllm-026-cand7.md))
+is the first image rollback; the 0.21.x pins survive only as a commented rollback block in
 `runtime/cluster.env.example`. Known alternatives that this kit does **not** ship:
 
 - **drowzeys' vLLM 0.24.0 port** — `git-apply` patches rather than a prebuilt image.

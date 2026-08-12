@@ -1,32 +1,29 @@
-# Serve profile for the vLLM 0.26.0 lane (image: vllm-dspark-runtime:v026-gx10-cand7-backports,
-# official arm64 vllm/vllm-openai:v0.26.0 + the gx10 overlay + backports
-# #50004/#49486/#48957/#48047/#50330, built by patches/vllm-026-rebase/; promoted 2026-08-10,
-# throughput-neutral vs cand4 at gate — see docs/13). This repo's own tuned serve argv is
-# adapted for 0.26.0. Local adaptations vs a stock serve command:
+# Serve profile for the production c8r lane (image: vllm-dspark-runtime:v0261-main-c8r —
+# full-source vLLM main @48bada6ea4 + gx10 overlay0261 + #49731 revert, built by
+# patches/vllm-0261-main-c8r/; promoted 2026-08-11 on a throughput-parity warm gate vs
+# cand7 — see docs/14). Local adaptations vs a stock serve command:
 #   - container_name vllm-dsv4 (stable name for preflight/metrics/stop)
 #   - API --host/--port env-driven, defaults 127.0.0.1:8000 (loopback-only)
-#   - vLLM 0.25.1: breakable-cudagraph kept on, Triton cache pinned to the persistent bind,
-#     CUDA-graph capture ceiling on the *2 formula (see docs/08)
-#   - KV pool pinned via --kv-cache-memory-bytes (when KV_CACHE_MEMORY_BYTES is set) instead of
-#     profiler sizing — eliminates the boot-to-boot pool variance AND grew the pool ~1.22x
-#     (the profiler's available-KV budget was carrying the sparse-MLA workspace + cudagraph
-#     capture). See docs/08 "Post-promotion updates".
+#   - breakable-cudagraph kept on, Triton/TileLang/vLLM cache roots pinned to the
+#     persistent bind under the -c8r set (full-source version string; own roots)
+#   - CUDA-graph capture ceiling on the *2 formula (see docs/08)
+#   - KV pool pinned via --kv-cache-memory-bytes (when KV_CACHE_MEMORY_BYTES is set) —
+#     on c8r the same 19.85 GiB pin yields 3,027,217 tokens (+2.7% vs cand7 via #48993
+#     MXFP4 indexer packing). See docs/08 / docs/14.
 #   - a MemAvailable-margin wait loop in the command preamble blocks `vllm serve` until free
 #     memory clears util-required + MEM_MARGIN_GIB — prevents a thin-memory worker from dying
 #     mid-rendezvous and desyncing its restart generation from the peer (2026-07-15 incident).
-#   - the command preamble's PATH/CUDA_HOME/vllm-binary paths are the anemll gx10 image's
-#     OWN internal layout (/usr/local/cuda, /usr/local/bin/vllm) — NOT the prior 0.21.x
-#     lane's image layout (/opt/env/...). Do not copy the old lane's preamble verbatim if
-#     you're building on a different base image; check that base's actual layout.
-#   - async scheduling OFF via --no-async-scheduling (0.26 lane, 2026-07-28; docs/10 "Open
-#     items"). Two traps: omitting the flag does NOT disable async on 0.26 (tri-state
-#     default resolves to enabled — vllm/config/vllm.py:1059-1107), and `#` comments inside
-#     this folded command scalar comment out everything after them — keep rationale here,
-#     in this YAML comment header, never inside the argv.
-# The prior 0.21.x lane's serve profile is preserved in git history and docs/08.
+#   - the command preamble's PATH/CUDA_HOME/vllm-binary paths are the image's
+#     OWN internal layout (/usr/local/cuda, /usr/local/bin/vllm) — same as the 0.26 gx10
+#     lineage. Do not copy the old 0.21.x lane's preamble (/opt/env/...) verbatim.
+#   - async scheduling OFF via --no-async-scheduling (standing since 0.26, 2026-07-28;
+#     docs/10). Two traps: omitting the flag does NOT disable async (tri-state default
+#     resolves to enabled), and `#` comments inside this folded command scalar comment
+#     out everything after them — keep rationale here, never inside the argv.
+# Rollback rungs (cand7, cand4, 0.25.1, 0.21.x) live in cluster.env.example + docs/08–13.
 services:
   vllm-dspark:
-    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:v026-gx10-cand7-backports}
+    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:v0261-main-c8r}
     pull_policy: if_not_present   # the tag is built locally and unpublishable — never try to pull it
     # REQUIRED for the gx10 base: neutralizes its baked ENTRYPOINT so `command: bash -lc`
     # below runs directly. Without this, the container double-execs (baked entrypoint wraps
@@ -54,13 +51,15 @@ services:
       HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-1}"
       TRANSFORMERS_OFFLINE: "${TRANSFORMERS_OFFLINE:-1}"
       HF_HUB_DISABLE_XET: "${HF_HUB_DISABLE_XET:-1}"
-      # Source-patch image keeps its OWN cache root (2026-08-10 cand7 promotion): the
+      # Full-source c8r image keeps its OWN cache root (2026-08-11 promotion): the
       # compile cache keys on version+config, never model source — shared roots silently
-      # reuse stale graphs and mask the patch. Rollback to cand4 ⇒ point this back at
-      # /cache/huggingface/vllm-cache (and the TRITON/TILELANG roots below at theirs).
-      VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache-cand7
-      # Long-context crash fix kill-switch (see docs/LONG_CONTEXT_CRASH_FIX.md).
-      # 1 (default) = clamp stale DSpark draft-KV slot ids; 0 = detect+log only.
+      # reuse stale graphs across image swaps. Rollback to cand7 ⇒ vllm-cache-cand7
+      # (and the TRITON/TILELANG roots below at theirs); cand4 ⇒ vllm-cache.
+      VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache-c8r
+      # LEGACY no-op on the 0.26+/c8r lane (verified 2026-08-10: zero readers in the installed
+      # vllm package — the crash class it guarded is handled by the overlay's own
+      # request-stable draft-KV slot mapping). Kept for harmlessness and 0.25.1-rollback
+      # compatibility, where it was live. See docs/LONG_CONTEXT_CRASH_FIX.md.
       DSPARK_SLOT_CLAMP: "${DSPARK_SLOT_CLAMP:-1}"
       VLLM_HOST_IP: "${VLLM_HOST_IP:-}"
 
@@ -68,7 +67,7 @@ services:
       # derived ceiling (== 65536*16 for this model). Set 1 only to deliberately
       # extrapolate past calibration (unsupported); 0 removes that latent footgun.
       VLLM_ALLOW_LONG_MAX_MODEL_LEN: "${VLLM_ALLOW_LONG_MAX_MODEL_LEN:-0}"
-      # DEAD ON THIS IMAGE (0.26.0 cand4/cand7, verified inert — unknown-env-var boot-log sweep
+      # DEAD ON THIS IMAGE (0.26+ / c8r, verified inert — unknown-env-var boot-log sweep
       # 2026-07-25): VLLM_TRITON_MLA_SPARSE, VLLM_SKIP_INIT_MEMORY_CHECK,
       # VLLM_USE_B12X_WO_PROJECTION, and the whole VLLM_DSPARK_*/VLLM_DSV4_* ablation family
       # (gx10-fork experiments, proven no-ops here). Kept out of the environment so the boot
@@ -80,7 +79,7 @@ services:
       VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "${VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS:-300}"
 
       # FlashInfer sampler: part of the DSpark garble fix AND hang-safe on this lane —
-      # the base's FlashInfer 0.6.15-dev carries PR #3615 (same fix for both). See docs/08.
+      # c8r pins FlashInfer 0.6.16.post3 (native on main; #3615 lineage). See docs/08, docs/14.
       VLLM_USE_FLASHINFER_SAMPLER: "${VLLM_USE_FLASHINFER_SAMPLER:-1}"
       # vLLM 0.25.1 auto-enables the breakable CUDA-graph path for DeepSeek-V4 (no
       # @support_torch_compile); =1 IS the supported route for this model. Keep =1.
@@ -103,11 +102,11 @@ services:
       # Persist FlashInfer's JIT/autotune workspace on the mount (container-ephemeral otherwise).
       FLASHINFER_WORKSPACE_BASE: "${FLASHINFER_WORKSPACE_BASE:-/cache/huggingface/flashinfer}"
       TILELANG_CLEANUP_TEMP_FILES: "${TILELANG_CLEANUP_TEMP_FILES:-1}"
-      TILELANG_CACHE_DIR: "${TILELANG_CACHE_DIR:-/cache/huggingface/tilelang-cand7}"   # -cand7 root: see the VLLM_CACHE_ROOT note above
+      TILELANG_CACHE_DIR: "${TILELANG_CACHE_DIR:-/cache/huggingface/tilelang-c8r}"   # -c8r root: see the VLLM_CACHE_ROOT note above
       # Triton kernel cache MUST be on the persistent bind: under breakable-cudagraph vLLM's
       # cache-redirect never runs, so an unset value falls through to container-ephemeral
       # /root/.triton/cache and cold-recompiles on every container recreate. See docs/07, docs/08.
-      TRITON_CACHE_DIR: "${TRITON_CACHE_DIR:-/cache/huggingface/triton-cache-cand7}"   # -cand7 root: same rule
+      TRITON_CACHE_DIR: "${TRITON_CACHE_DIR:-/cache/huggingface/triton-cache-c8r}"   # -c8r root: same rule
       DG_JIT_USE_NVRTC: "${DG_JIT_USE_NVRTC:-0}"
       DG_JIT_NVCC_COMPILER: "${DG_JIT_NVCC_COMPILER:-/usr/local/cuda/bin/nvcc}"  # gx10 image path; the prior 0.21.x lane's was /opt/env/bin/nvcc
       PYTORCH_CUDA_ALLOC_CONF: "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
@@ -138,6 +137,10 @@ services:
       # Reasoning toggle (see docs/06). on (default) = server-default thinking + the official
       # V4-Flash reasoning sampling (temp/top_p 1.0); off = non-think greedy, byte-identical to the
       # original tuned recipe. Effort: high (default) or max (max needs MAX_MODEL_LEN>=393216).
+      # Optional: add ,"drop_thinking":false to the on-branch CHAT_KWARGS below to also preserve
+      # prior-turn CoT on non-tool multi-turn turns (upstream default True drops it; tool turns
+      # are always preserved by the encoder). A/B-gated throughput-neutral 2026-08-10 — see
+      # docs/06. Cost when enabled: longer prompts on multi-turn sessions.
       DSPARK_REASONING: "${DSPARK_REASONING:-on}"
       DSPARK_REASONING_EFFORT: "${DSPARK_REASONING_EFFORT:-high}"
 
@@ -185,6 +188,7 @@ services:
         --gpu-memory-utilization ${GPU_MEMORY_UTILIZATION:-0.85}
         ${KV_CACHE_MEMORY_BYTES:+--kv-cache-memory-bytes ${KV_CACHE_MEMORY_BYTES}}
         --enable-prefix-caching
+        --enable-prompt-tokens-details
         --no-async-scheduling
         --enable-chunked-prefill
         --speculative-config "$${SPECULATIVE_CONFIG}"

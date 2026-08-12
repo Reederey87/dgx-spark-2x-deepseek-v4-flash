@@ -111,6 +111,21 @@ for. To roll the watcher back:
 systemctl --user disable --now vllm-metrics-watch.timer
 ```
 
+### Per-request cached-token telemetry
+
+The serve argv carries `--enable-prompt-tokens-details`, so every response's `usage`
+includes `prompt_tokens_details.cached_tokens` — how many prompt tokens were served from
+the prefix cache **for that single request**. It complements the Prometheus
+`vllm:prefix_cache_*` counters the watcher scrapes: the counters are fleet-wide and
+cumulative, this is per-request and exact. Handy when you suspect one client isn't
+cache-hitting (e.g. an agent that reorders its system prompt):
+
+```bash
+curl -s http://127.0.0.1:8000/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model":"deepseek-v4-flash-dspark","messages":[{"role":"user","content":"hi"}],"max_tokens":8}' \
+  | jq '.usage.prompt_tokens_details'
+```
+
 ### Telegram alerting (optional)
 
 WARNs route to Telegram **only** if a git-ignored `notify.env` (`chmod 600`) supplies
@@ -224,3 +239,35 @@ SKIP_TTFT=1 SKIP_LATENCY=1 bash runtime/eval-cluster.sh   # skip the streaming-T
 
 Reference composite on one pair is high-90s with the HoL fix wired; the number is a health
 signal, not a guarantee — yours will vary.
+
+---
+
+## Decode rate at depth — `bench-decode-depth.py`
+
+Every published C1/C8 number for this kit is **short-context**; decode rate at 500K+ was
+unmeasured until this script. `runtime/bench-decode-depth.py` closes that blind spot (the
+one [MiaAI-Lab issue #22](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/22)
+flagged — an unproven report of `nvfp4_ds_mla` decode collapsing to ~1 tok/s at ~630K on a
+different lane). It builds exact-length prompts via the server's `/tokenize` endpoint,
+plants a unique random nonce in the first cache block of every request so prefix caching
+can't leak across cases, then streams a short non-thinking completion at each depth and
+reports TTFT, prefill tok/s, and **steady-state decode tok/s** (inter-chunk deltas, first
+token excluded), median/min/max across reps. Results JSON is rewritten after **every**
+request, so a kill mid-run loses nothing.
+
+Run it **on the head node** (loopback), stdlib-only:
+
+```bash
+python3 runtime/bench-decode-depth.py                 # default depths 8K/128K/256K/400K/640K, 2 reps
+python3 runtime/bench-decode-depth.py --depths 524288,786432 --reps 3 --max-tokens 256
+```
+
+- **Expected runtime:** prefill on this lane runs ~855 tok/s, so the 640K default depth
+  alone is ~13 minutes of TTFT per rep and the full default sweep is roughly an hour.
+  `--request-timeout` (default 3600 s) caps any single request.
+- **Load warning:** this puts real load on a *serving* cluster for that whole time. Run it
+  only when the lane may carry bench load (a maintenance/A-B window), not during
+  production traffic.
+- **The `fp8_ds_mla` diagnostic arm** (issue #22's comparison point) is a separate config
+  lane — `KV_CACHE_DTYPE=fp8_ds_mla` in `cluster.env` and a cluster restart — not a flag
+  on this script.

@@ -1,14 +1,18 @@
 # The vLLM 0.26.0 rebase and promotion (2026-07-28)
 
-This page documents the current default lane: **vLLM 0.26.0**, promoted 2026-07-28, replacing
-the 0.25.1 lane ([docs/08](08-optimization-and-vllm-025.md), now the rollback). Numbers
-are directional measurements from one 2× DGX Spark pair; re-run the gates on your own hardware.
+This page documents the **0.26.0 rebase**, promoted 2026-07-28 (replacing the 0.25.1 lane —
+[docs/08](08-optimization-and-vllm-025.md)). **Live production since 2026-08-11 is the
+full-source c8r lane** ([docs/14](14-vllm-027-c8r.md)); 0.26.0 cand7 is the first image
+rollback. Numbers are directional measurements from one 2× DGX Spark pair; re-run the
+gates on your own hardware.
 
-> **2026-08-10 update:** the lane's image moved to **`v026-gx10-cand7-backports`** (cand4 +
+> **2026-08-11 update:** production moved to **`v0261-main-c8r`** (main @48bada6ea4 +
+> overlay0261 + #49731 revert). See [docs/14](14-vllm-027-c8r.md).
+>
+> **2026-08-10 update:** the 0.26.0 image moved to **`v026-gx10-cand7-backports`** (cand4 +
 > backports #48957/#48047/#50330, own `-cand7` cache roots) after a same-day gate measured it
 > throughput-**neutral** — it buys the #50330 draft-quant correctness fix at zero measured
-> cost. Everything on this page (evidence, guards, rollback mechanics) stands; cand4 is now
-> the first image rollback rung. Full record: [docs/13](13-vllm-026-cand7.md).
+> cost. Full cand7 record: [docs/13](13-vllm-026-cand7.md).
 
 ## Lane definition
 

@@ -59,6 +59,14 @@ garble gate is the accept criterion.
 
 `reasoning_effort`: `high` (default) or `max`. `max` prepends a maximize-depth instruction and needs
 `--max-model-len >= 393216` (the 1M default clears it) — reserve it for low-concurrency calls.
+⚠ **The wrapper's effort mapping is coarse and lane-dependent** (`vllm/tokenizers/deepseek_v4.py`):
+- **c8r lane (current, main @48bada6ea4):** `none` turns thinking off, `max` is `max`,
+  `low`/`minimal`/`medium` map to `low`, and **any other string — including `xhigh` —
+  silently runs as `high`.**
+- **cand7 rollback lane (vendored 0.26):** only `none` / `max` / `xhigh` are special-cased —
+  **any other string, including `low` and `medium`, silently runs as `high`.** A `low` ask is
+  not an error there, it just isn't low.
+Re-check this mapping after any image bump; it has already changed once between lanes.
 
 ## The `max_tokens` trap
 
@@ -82,6 +90,27 @@ a tool round-trip with thinking on and no reasoning echoed back returns `200`. S
 hard-break here. They only lose prior-turn chain-of-thought on replay, because vLLM's OpenAI-compat
 endpoint does not consume incoming `reasoning_content`. Clients that want interleaved thinking preserved
 across tool turns should re-embed the prior `<think>…</think>` inline in `content` on replay.
+
+## Prior-turn CoT on replay — `drop_thinking` (opt-in, upstream default drops)
+
+When prior thinking **is** present in the conversation history, two pieces of the vendored
+0.26 tokenizer/encoder decide whether it survives into the next rendered prompt:
+
+1. **Tool turns always keep it.** In the encoder (`vllm/tokenizers/deepseek_v4_encoding.py`),
+   if any message in the request has tools defined, `drop_thinking` is **auto-disabled** —
+   tool-call turns preserve prior chain-of-thought regardless of the configured value.
+2. **Non-tool turns are governed by `drop_thinking` (upstream default `True`, what this kit
+   ships).** Left at the default, a multi-turn conversation *without* tools renders each new
+   prompt with earlier turns' thinking stripped — the model re-reasons from scratch every turn.
+
+To preserve CoT on **every** multi-turn conversation, opt in either per request
+(`chat_template_kwargs: {"drop_thinking": false}`) or server-side by adding
+`,"drop_thinking":false` to the on-branch `CHAT_KWARGS` in `runtime/docker-compose.dspark.yml`
+(the compose comment marks the spot). We A/B-gated the server-side spelling on 2026-08-10:
+throughput-neutral on the single-turn battery (expected — it only changes multi-turn renders),
+functional probe confirmed preservation (a 2-turn payload with planted prior CoT went 66 → 252
+prompt tokens). The cost is longer prompts on long non-tool sessions; prefix caching still
+applies, so re-rendering an unchanged history is mostly cache hits.
 
 ## How it works (for the curious)
 

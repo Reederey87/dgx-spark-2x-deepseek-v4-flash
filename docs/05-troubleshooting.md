@@ -21,9 +21,9 @@ Two rules that prevent most of this:
 
 - **Never build images or run heavy jobs on a node while it serves.** Unified memory means a
   compile or big `rsync` competes directly with the engine. Build first, serve second.
-- If crashes appear specifically at **long context under load**, that's the
-  `DSPARK_SLOT_CLAMP` territory — keep it at `1` (the default) and see
-  [LONG_CONTEXT_CRASH_FIX.md](LONG_CONTEXT_CRASH_FIX.md).
+- If crashes appear specifically at **long context under load**, that is the crash class
+  `DSPARK_SLOT_CLAMP` was built for — a legacy no-op on the 0.26 lane (the overlay handles
+  the class itself); see [LONG_CONTEXT_CRASH_FIX.md](LONG_CONTEXT_CRASH_FIX.md).
 
 ---
 
@@ -65,6 +65,10 @@ most-common cause first:
    Probabilistic `5` tested clean but reduced KV headroom and throughput; **greedy** `5`
    reintroduces the corruption risk. See the garble-fix section of
    [03-model-and-features.md](03-model-and-features.md).
+4. **Harness-side, not the server.** If the direct API is clean — including the concurrent
+   probes in `eval-cluster.sh` — but your agent harness garbles, look harness-side **before**
+   touching weights or KV dtype: a silent fallback to a different provider/model, or a stale
+   session replaying corrupted history, both present as "model garble" one layer up.
 
 ---
 
@@ -114,6 +118,28 @@ that are *not* on loopback/QSFP so you can eyeball them.
   ```bash
   sudo ufw allow from 192.168.177.0/24 to any port 25000   # pin rendezvous to the fabric
   ```
+
+---
+
+## (f) Known GB10 platform issues
+
+Two driver/kernel-level failure classes seen across independent GB10 stacks (reported as
+[MiaAI-Lab issue #17](https://github.com/MiaAI-Lab/DeepSeek-v4-Flash-DSpark-2x-DGX-Spark/issues/17))
+— worth recognizing on sight so they aren't misread as model or config faults:
+
+- **`NV_ERR_NO_MEMORY` (0x51) memdesc leak — driver ≤ 580.159.03.** Churn-driven
+  (agentic load) memdesc-allocation failures in the kernel journal, ~163×/boot in the
+  reporter's count; `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` cut it 163→1, and
+  a reboot resets the count. **This kit's reference nodes run driver 580.173.02, which is
+  past the leak**, and the compose ships `expandable_segments:True` — if 0x51 lines ever
+  appear in your kernel journal, flipping `expandable_segments` to `False` (one compose
+  line) is the first mitigation probe, and check your driver version.
+- **Host freeze: silent logs, GPU pegged at ~96% util / ~18 W / 0% memory traffic.** The
+  signature is a hang on **thread-resume with a warm prefix cache**, triggered by
+  Hermes-style agentic traffic; logs go silent and the only recovery is a power cycle.
+  The signature matches vllm-project/vllm RFC **#48720** (a `sparse_mla_sm120` mbarrier
+  livelock) and was reproduced on three independent stacks. If you hit it: capture driver
+  version + the frozen `nvidia-smi` reading, and report upstream against that RFC.
 
 ---
 
