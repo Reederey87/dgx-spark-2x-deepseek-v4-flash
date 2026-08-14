@@ -44,6 +44,7 @@ WAIT_WARN="${WAIT_WARN:-5}"             # sustained requests waiting
 KVUTIL_WARN="${KVUTIL_WARN:-0.95}"      # KV pool pressure (OOM risk)
 ACCEPT_WARN="${ACCEPT_WARN:-0.30}"      # spec-decode acceptance floor
 MIN_DRAFT="${MIN_DRAFT:-50}"            # ignore acceptance when too few draft tokens this interval
+SWAP_WARN_MB="${SWAP_WARN_MB:-1024}"    # parked swap is logged; alerts require active I/O below
 # Health: boot-to-serving is ~6 min; require N consecutive scrape misses before WARN.
 HEALTH_FAIL_STREAK="${HEALTH_FAIL_STREAK:-4}"   # 4 × ~45 s ≈ 3 min of true down
 # Suppress health WARNs while the container is younger than this (boot/warmup).
@@ -160,6 +161,50 @@ if [ -n "$cmd" ]; then
   fi
 else
   emit "note: vllm-dsv4 not inspectable (not running?)"
+fi
+
+# --- 1b. host swap: on unified memory, active swap I/O is an early warning that
+# the memory budget is being exceeded. Parked pages are inert leftovers, so only
+# alert after sustained movement or a single hard-thrash spike. ---
+SWAP_IO_WARN_PAGES="${SWAP_IO_WARN_PAGES:-256}"
+case "$SWAP_IO_WARN_PAGES" in ''|*[!0-9]*) SWAP_IO_WARN_PAGES=256 ;; esac
+SWAP_IO_WARN_TICKS="${SWAP_IO_WARN_TICKS:-3}"
+case "$SWAP_IO_WARN_TICKS" in ''|*[!0-9]*) SWAP_IO_WARN_TICKS=3 ;; esac
+SWAP_IO_CRIT_PAGES="${SWAP_IO_CRIT_PAGES:-4096}"
+case "$SWAP_IO_CRIT_PAGES" in ''|*[!0-9]*) SWAP_IO_CRIT_PAGES=4096 ;; esac
+swap_total_kb="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+swap_free_kb="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo 2>/dev/null || true)"
+case "$swap_total_kb" in ''|*[!0-9]*) swap_total_kb=0 ;; esac
+case "$swap_free_kb" in ''|*[!0-9]*) swap_free_kb=0 ;; esac
+pswp_now="$(awk '/^pswpin/ {i=$2} /^pswpout/ {o=$2} END {print i+o}' /proc/vmstat 2>/dev/null || true)"
+case "$pswp_now" in ''|*[!0-9]*) pswp_now=0 ;; esac
+if grep -q '^pswp_total=' "$STREAK_STATE" 2>/dev/null; then
+  pswp_prev="$(streak_get pswp_total)"
+  pswp_delta=$(( pswp_now - pswp_prev ))
+  [ "$pswp_delta" -lt 0 ] && pswp_delta=0
+else
+  pswp_delta=0
+fi
+streak_set pswp_total "$pswp_now"
+if [ "$swap_total_kb" -gt 0 ]; then
+  swap_used_mb=$(( (swap_total_kb - swap_free_kb) / 1024 ))
+  if [ "$swap_used_mb" -gt "$SWAP_WARN_MB" ]; then
+    if [ "$pswp_delta" -gt "$SWAP_IO_WARN_PAGES" ]; then
+      io_streak=$(( $(streak_get swap_io) + 1 ))
+    else
+      io_streak=0
+    fi
+    streak_set swap_io "$io_streak"
+    if [ "$pswp_delta" -gt "$SWAP_IO_CRIT_PAGES" ]; then
+      emit "WARN swap: ${swap_used_mb}MB in use AND swap SPIKE (${pswp_delta} pages this tick > SWAP_IO_CRIT_PAGES=${SWAP_IO_CRIT_PAGES}) — hard thrash; unified-memory budget exceeded"
+    elif [ "$io_streak" -ge "$SWAP_IO_WARN_TICKS" ]; then
+      emit "WARN swap: ${swap_used_mb}MB in use AND sustained swapping (${pswp_delta} pages/tick > SWAP_IO_WARN_PAGES=${SWAP_IO_WARN_PAGES} for ${io_streak} consecutive ticks) — unified-memory budget exceeded"
+    elif [ "$io_streak" -gt 0 ]; then
+      emit "note: swap: ${pswp_delta} pages this tick (> ${SWAP_IO_WARN_PAGES}) but streak ${io_streak}/${SWAP_IO_WARN_TICKS} — not alerting yet"
+    else
+      emit "INFO swap: ${swap_used_mb}MB parked (> SWAP_WARN_MB=${SWAP_WARN_MB}MB) but si/so≈0 this tick (${pswp_delta} pages) — inert leftovers, no action"
+    fi
+  fi
 fi
 
 # --- 2. scrape /metrics (with boot-grace + streak before Telegram WARN) ---

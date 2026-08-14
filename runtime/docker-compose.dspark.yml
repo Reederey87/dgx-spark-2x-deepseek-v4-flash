@@ -23,7 +23,7 @@
 # Rollback rungs (cand7, cand4, 0.25.1, 0.21.x) live in cluster.env.example + docs/08–13.
 services:
   vllm-dspark:
-    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:v0261-main-c8r}
+    image: ${DSPARK_VLLM_IMAGE:-vllm-dspark-runtime:v0261-main-c8r-tbfix}
     pull_policy: if_not_present   # the tag is built locally and unpublishable — never try to pull it
     # REQUIRED for the gx10 base: neutralizes its baked ENTRYPOINT so `command: bash -lc`
     # below runs directly. Without this, the container double-execs (baked entrypoint wraps
@@ -51,11 +51,11 @@ services:
       HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-1}"
       TRANSFORMERS_OFFLINE: "${TRANSFORMERS_OFFLINE:-1}"
       HF_HUB_DISABLE_XET: "${HF_HUB_DISABLE_XET:-1}"
-      # Full-source c8r image keeps its OWN cache root (2026-08-11 promotion): the
+      # The c8r-tbfix derivative keeps its OWN cache roots (2026-08-12 promotion): the
       # compile cache keys on version+config, never model source — shared roots silently
       # reuse stale graphs across image swaps. Rollback to cand7 ⇒ vllm-cache-cand7
       # (and the TRITON/TILELANG roots below at theirs); cand4 ⇒ vllm-cache.
-      VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache-c8r
+      VLLM_CACHE_ROOT: /cache/huggingface/vllm-cache-tbfix
       # LEGACY no-op on the 0.26+/c8r lane (verified 2026-08-10: zero readers in the installed
       # vllm package — the crash class it guarded is handled by the overlay's own
       # request-stable draft-KV slot mapping). Kept for harmlessness and 0.25.1-rollback
@@ -100,13 +100,13 @@ services:
       FLASHINFER_CUDA_ARCH_LIST: "${FLASHINFER_CUDA_ARCH_LIST:-12.1a}"
       FLASHINFER_DISABLE_VERSION_CHECK: "${FLASHINFER_DISABLE_VERSION_CHECK:-1}"
       # Persist FlashInfer's JIT/autotune workspace on the mount (container-ephemeral otherwise).
-      FLASHINFER_WORKSPACE_BASE: "${FLASHINFER_WORKSPACE_BASE:-/cache/huggingface/flashinfer}"
+      FLASHINFER_WORKSPACE_BASE: "${FLASHINFER_WORKSPACE_BASE:-/cache/huggingface/flashinfer-tbfix}"
       TILELANG_CLEANUP_TEMP_FILES: "${TILELANG_CLEANUP_TEMP_FILES:-1}"
-      TILELANG_CACHE_DIR: "${TILELANG_CACHE_DIR:-/cache/huggingface/tilelang-c8r}"   # -c8r root: see the VLLM_CACHE_ROOT note above
+      TILELANG_CACHE_DIR: "${TILELANG_CACHE_DIR:-/cache/huggingface/tilelang-tbfix}"
       # Triton kernel cache MUST be on the persistent bind: under breakable-cudagraph vLLM's
       # cache-redirect never runs, so an unset value falls through to container-ephemeral
       # /root/.triton/cache and cold-recompiles on every container recreate. See docs/07, docs/08.
-      TRITON_CACHE_DIR: "${TRITON_CACHE_DIR:-/cache/huggingface/triton-cache-c8r}"   # -c8r root: same rule
+      TRITON_CACHE_DIR: "${TRITON_CACHE_DIR:-/cache/huggingface/triton-cache-tbfix}"
       DG_JIT_USE_NVRTC: "${DG_JIT_USE_NVRTC:-0}"
       DG_JIT_NVCC_COMPILER: "${DG_JIT_NVCC_COMPILER:-/usr/local/cuda/bin/nvcc}"  # gx10 image path; the prior 0.21.x lane's was /opt/env/bin/nvcc
       PYTORCH_CUDA_ALLOC_CONF: "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"

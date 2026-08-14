@@ -86,6 +86,12 @@ note** (`capacity-b`): that's the one HoL case the threshold lever can't close (
 prefills together refill the whole token budget), so the note counts how often it actually
 happens before anyone builds client-side request shaping for it.
 
+The watcher also samples host swap counters. On GB10, CPU and GPU share one
+memory pool, so active swap is an early performance and stability signal. Parked
+pages with no I/O are logged as information only. A warning requires three
+consecutive ticks above 256 moved pages, or one hard-thrash tick above 4,096
+pages.
+
 The analyzer also correlates against the watchdog's `.watchdog-probe.state`: intervals whose
 only traffic was the watchdog's own 1-token canary are marked **canary-only** (`ttft_iv_ms=n/a`
 + `ttft_probe_ms=…`) instead of being reported as user latency — otherwise an idle box looks
@@ -99,6 +105,9 @@ Thresholds are env-tunable:
 | `WAIT_WARN` | `5` | sustained requests waiting (saturation / head-of-line) |
 | `KVUTIL_WARN` | `0.95` | KV pool pressure (OOM risk) |
 | `ACCEPT_WARN` | `0.30` | spec-decode interval acceptance floor (MTP health) |
+| `SWAP_WARN_MB` | `1024` | swap usage above this is evaluated; parked pages remain log-only |
+| `SWAP_IO_WARN_PAGES` / `SWAP_IO_WARN_TICKS` | `256` / `3` | sustained swap movement before a warning |
+| `SWAP_IO_CRIT_PAGES` | `4096` | single-tick hard-thrash warning |
 | — (fixed) | `>0` | any request waiting with `reason="capacity"` (KV-pool saturation, the pre-cursor to the watchdog's saturation triage) |
 | `NOTIFY_COOLDOWN` | `900` | seconds between reminders for a persistent condition (see alerting) |
 
