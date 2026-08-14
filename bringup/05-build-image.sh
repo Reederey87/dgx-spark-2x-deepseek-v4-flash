@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build the production DSpark vLLM serving image — full-source c8r lane.
+# Build the production DSpark vLLM serving image — full-source c8r + tbfix.
 #
 # There is no official arm64 Docker image for this base. Stage-1 is a multi-hour
 # nvcc source build of upstream vLLM main @48bada6ea4 on the head node (cluster
 # must be stopped), then a thin runtime layer applies the gx10 overlay0261 + the
 # #49731 revert. The real builder lives at patches/vllm-0261-main-c8r/ — this
 # script is the numbered bringup entry point that sources cluster.env and
-# forwards to it.
+# forwards to it, then builds the small thinking-budget derivative.
 #
 #   bash bringup/05-build-image.sh                 # stage-1 + runtime + smoke
 #   bash bringup/05-build-image.sh --distribute    # also push to the worker
@@ -27,16 +27,31 @@ source "$ROOT/runtime/cluster.env"
 
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
-echo "== production image: full-source c8r (patches/vllm-0261-main-c8r/)"
+echo "== production image: full-source c8r + thinking-budget fix"
 echo "   DSPARK_VLLM_IMAGE=$DSPARK_VLLM_IMAGE"
 echo "   DSPARK_VLLM_BASE_IMAGE=$DSPARK_VLLM_BASE_IMAGE"
 echo "   NOTE: stage-1 is multi-hour nvcc; stop the cluster first (runtime/stop-cluster.sh)."
 echo "   Prepare the pinned checkout once: git -C ~/vllm worktree add ~/vllm-0261-main-wt 48bada6ea4"
 
-bash "$ROOT/patches/vllm-0261-main-c8r/build-0261-image.sh" "$@" \
+base_args=()
+tbfix_args=()
+for arg in "$@"; do
+  base_args+=("$arg")
+  [ "$arg" = "--distribute" ] && tbfix_args+=("$arg")
+done
+
+# The c8r builder normally inherits DSPARK_VLLM_IMAGE. Override it so stage 1
+# always produces the rollback runtime that the tbfix layer consumes.
+FINAL_TAG="${DSPARK_VLLM_ROLLBACK_IMAGE:-vllm-dspark-runtime:v0261-main-c8r}" \
+  bash "$ROOT/patches/vllm-0261-main-c8r/build-0261-image.sh" "${base_args[@]}" \
   || fail "c8r image build failed" "inspect patches/vllm-0261-main-c8r/build-0261-image.sh output"
 
-echo "ok: c8r image build finished"
+BASE="${DSPARK_VLLM_ROLLBACK_IMAGE:-vllm-dspark-runtime:v0261-main-c8r}" \
+TAG="$DSPARK_VLLM_IMAGE" \
+  bash "$ROOT/patches/vllm-0261-main-tbfix/build-and-distribute.sh" "${tbfix_args[@]}" \
+  || fail "tbfix image build failed" "inspect patches/vllm-0261-main-tbfix/build-and-distribute.sh output"
+
+echo "ok: c8r + tbfix image build finished"
 if [[ " $* " != *" --distribute "* ]]; then
   echo "next: bash bringup/06-distribute-image.sh   # head → worker + image-ID parity"
 fi

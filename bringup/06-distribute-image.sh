@@ -8,10 +8,12 @@ source "$KIT/../runtime/cluster.env"
 fail() { echo "FAIL: $1 — $2" >&2; exit 1; }
 
 if [ "${SKIP_SAVE:-0}" != "1" ]; then
-  ssh "$CLUSTER_USER@$HEAD_HOST" "DSPARK_VLLM_IMAGE='$DSPARK_VLLM_IMAGE' DSPARK_VLLM_BASE_IMAGE='$DSPARK_VLLM_BASE_IMAGE' bash -s" <<'REMOTE' \
+  ssh "$CLUSTER_USER@$HEAD_HOST" "DSPARK_VLLM_IMAGE='$DSPARK_VLLM_IMAGE' DSPARK_VLLM_BASE_IMAGE='$DSPARK_VLLM_BASE_IMAGE' DSPARK_VLLM_ROLLBACK_IMAGE='${DSPARK_VLLM_ROLLBACK_IMAGE:-}' bash -s" <<'REMOTE' \
     || fail "docker save failed on $HEAD_HOST" "verify image exists and zstd is installed"
 set -euo pipefail
-docker save "$DSPARK_VLLM_IMAGE" "$DSPARK_VLLM_BASE_IMAGE" | zstd -T0 -3 > ~/vllm-dsv4-image.tar.zst
+images=("$DSPARK_VLLM_IMAGE" "$DSPARK_VLLM_BASE_IMAGE")
+[ -n "$DSPARK_VLLM_ROLLBACK_IMAGE" ] && images+=("$DSPARK_VLLM_ROLLBACK_IMAGE")
+docker save "${images[@]}" | zstd -T0 -3 > ~/vllm-dsv4-image.tar.zst
 REMOTE
   echo "ok: serving + rollback image tags archived on head"
 else
@@ -52,3 +54,13 @@ echo "worker rollback image: $worker_base_id"
 [ "$head_base_id" = "$worker_base_id" ] \
   || fail "rollback image IDs differ" "rerun distribution with SKIP_SAVE=0"
 echo "ok: rollback image IDs match"
+
+if [ -n "${DSPARK_VLLM_ROLLBACK_IMAGE:-}" ]; then
+  head_runtime_id="$(ssh "$CLUSTER_USER@$HEAD_HOST" "docker image inspect '$DSPARK_VLLM_ROLLBACK_IMAGE' --format '{{.Id}}'")" \
+    || fail "could not inspect head runtime rollback" "verify rollback image tag on head"
+  worker_runtime_id="$(ssh "$CLUSTER_USER@$WORKER_HOST" "docker image inspect '$DSPARK_VLLM_ROLLBACK_IMAGE' --format '{{.Id}}'")" \
+    || fail "could not inspect worker runtime rollback" "rerun distribution with SKIP_SAVE=0"
+  [ "$head_runtime_id" = "$worker_runtime_id" ] \
+    || fail "runtime rollback image IDs differ" "rerun distribution with SKIP_SAVE=0"
+  echo "ok: runtime rollback image IDs match: $head_runtime_id"
+fi

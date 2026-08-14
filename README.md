@@ -12,7 +12,7 @@ In a hurry? → [Quickstart](#quickstart).
 > number is an observation, not a guarantee; yours will vary. The full-source image build is
 > multi-hour nvcc with serving stopped. Throughput tables are short-context; decode rate at
 > 500K+ context is unmeasured on this lane (`runtime/bench-decode-depth.py` closes that).
-> The DSpark/GB10 stack is fast-moving and largely single-author. The current c8r lane
+> The DSpark/GB10 stack is fast-moving and largely single-author. The current c8r-tbfix lane
 > builds from source (the FlashInfer wheel and the PyTorch builder base image are the
 > prebuilt exceptions); the older rollback lanes (0.25.1, 0.21.x) additionally depend on
 > prebuilt, non-source-buildable kernels and images.
@@ -21,16 +21,19 @@ Name decoder (this kit's jargon, used throughout):
 
 - **gx10** — the community GB10 port lineage this kit builds on (anemll's `dspark-vllm-gx10` overlay).
 - **DSpark** — DeepSeek's speculative-decoding draft-head family used by V4-Flash (also the name of the preview checkpoint).
-- **c8r** — the current image lane: full-source vLLM `main` @48bada6ea4, i.e. "0.27-content". One thing, three spellings: image tag `v0261-main-c8r`, prose "0.27-content", receipt [docs/14](docs/14-vllm-027-c8r.md).
+- **c8r** — the full-source vLLM `main` @48bada6ea4 base, i.e. "0.27-content"; receipt [docs/14](docs/14-vllm-027-c8r.md).
+- **c8r-tbfix** — current production: c8r plus the thinking-budget fast-path fix; receipt [docs/15](docs/15-tbfix-and-async-safety.md).
 - **cand7 / cand4** — the 0.26.0 thin-overlay image lanes, now the first rollback rungs.
 
-**Current production stack (2026-08-11):** full-source vLLM **main @48bada6ea4**
-(0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert → image
-`vllm-dspark-runtime:v0261-main-c8r`, built by
-[patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/). Weights:
+**Current production stack (2026-08-12):** full-source vLLM **main @48bada6ea4**
+(0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert + the
+thinking-budget fast-path fix → image `vllm-dspark-runtime:v0261-main-c8r-tbfix`, built by
+[patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/) and
+[patches/vllm-0261-main-tbfix/](patches/vllm-0261-main-tbfix/). Weights:
 [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
 at revision `9e165c30e2704aec5d9d593cce3eebd58bbef1cb`. KV pool **3,027,217 tokens** at
-the pinned 19.85 GiB budget. Full receipt: [docs/14](docs/14-vllm-027-c8r.md).
+the pinned 19.85 GiB budget. Receipts: [docs/14](docs/14-vllm-027-c8r.md) and
+[docs/15](docs/15-tbfix-and-async-safety.md).
 
 **0731 is the official V4-Flash release** (2026-07-31), superseding the
 `DeepSeek-V4-Flash-DSpark` preview. Same checkpoint family, same ~155.4 GiB footprint,
@@ -95,7 +98,8 @@ Everything you need is **public — no accounts, no tokens, anywhere**:
   is a public Hugging Face repo — no token required. (Preview rollback:
   [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark).)
 - **Serving image:** full-source build of upstream vLLM `main` @ `48bada6ea4` + the
-  overlay in this repo ([patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/)).
+  overlay in this repo ([patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/)) + the
+  small thinking-budget layer ([patches/vllm-0261-main-tbfix/](patches/vllm-0261-main-tbfix/)).
   First rollback is the thinner official `vllm/vllm-openai:v0.26.0` + cand7 overlay
   ([patches/vllm-026-rebase/](patches/vllm-026-rebase/)).
 - **Path:** clone → `bringup/00–09` → `runtime/cluster.env` from the example → systemd.
@@ -225,7 +229,7 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MTP_NUM_TOKENS` | `2` | DSpark speculative draft length — the current sweet spot: **+3.8% single-stream decode vs `3`, concurrency-8 tie** (measured, see `docs/11`). `3` is a fine fallback; greedy `5` is unsafe (garble risk, see `docs/03`). |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | `72` | Keeps the spec-decode decode path graphed at concurrency. Derive as `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — `72 = 12 × (2+1) × 2`. See `docs/08`. |
 | `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | The supported CUDA-graph route for this model. **Keep `1`.** See `docs/08`. |
-| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-c8r` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). The `-c8r` root follows the full-source cache-root rule (own roots per image generation; see `docs/14`). |
+| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-tbfix` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). Every source derivative gets isolated generated-cache roots; see `docs/14`–`docs/15`. |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
 | `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
@@ -234,9 +238,9 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 
 The serve argv also pins `--attention-config '{"backend":"FLASHINFER_MLA_SPARSE_DSV4"}'`
 (the SM120 sparse-MLA route — explicit drift-guard; the default would resolve identically)
-and `--no-async-scheduling` (on 0.26+ the async default would shrink the *reported* KV pool
-via upstream #47728's doubled sliding-window reservation — measured throughput-neutral, so
-the pool comes back for free; see `docs/10`, `docs/11`).
+and `--no-async-scheduling`. Omitting that flag enables async on this vLLM line. The new
+W6 harness can qualify an async derivative, but the current candidate remains on HOLD after
+post-request swap activity; see [docs/15](docs/15-tbfix-and-async-safety.md).
 
 ---
 
@@ -245,7 +249,7 @@ the pool comes back for free; see `docs/10`, `docs/11`).
 All measured on our own 2× GB10 pair (`GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`).
 Treat these as **observations, not guarantees** — yours will vary.
 
-**DeepSeek-V4-Flash-0731 on c8r (current, 2026-08-11 warm gate):**
+**DeepSeek-V4-Flash-0731 on c8r-tbfix (current; c8r warm throughput reference):**
 
 | Metric | Result |
 |---|---|
@@ -255,9 +259,9 @@ Treat these as **observations, not guarantees** — yours will vary.
 | Bench acceptance | **0.495 / 0.490** (flat vs cand7) |
 | Deep-context retrieval | **3/3 needle HITs @ ~944K** (prior 0731 gate; c8 arm reconfirmed) |
 | KV cache pool | **3,027,217 tokens** (same 19.85 GiB pin as cand7; **+2.7%** via #48993 packing) — ~**2.89×** concurrent @ 1M |
-| Serving image | `vllm-dspark-runtime:v0261-main-c8r` — full-source main @`48bada6ea4` + overlay0261 + #49731 revert, built by [patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/) — see [docs/14](docs/14-vllm-027-c8r.md) |
+| Serving image | `vllm-dspark-runtime:v0261-main-c8r-tbfix` — c8r plus the thinking-budget fast-path fix; see [docs/14](docs/14-vllm-027-c8r.md) and [docs/15](docs/15-tbfix-and-async-safety.md) |
 | Dependencies | main's pins at the SHA (FlashInfer **0.6.16.post3**, b12x lineage, torch/CUDA from the stage-1 Dockerfile) + DeepGEMM rebuild at the 0.26-class SM120 pin |
-| Rollback | weights: flip `DSPARK_MODEL` to `DeepSeek-V4-Flash-DSpark` + its `DSPARK_REVISION` · image: `v026-gx10-cand7-backports` + `-cand7` roots (first rung), then cand4, then `vgx10-011-pr47356` (0.25.1) |
+| Rollback | image: `v0261-main-c8r` + `-c8r` roots (immediate), then `v026-gx10-cand7-backports` + `-cand7` roots, cand4, and `vgx10-011-pr47356`; weights: flip `DSPARK_MODEL` and `DSPARK_REVISION` to the preview |
 
 > ⚠️ **These are short-context numbers.** Every C1/C8 throughput figure above was measured
 > at prompts of a few K tokens; **decode rate at 500K+ context is unmeasured on this
@@ -300,7 +304,8 @@ chunk them. See `docs/12`.
 [docs/08](docs/08-optimization-and-vllm-025.md) (0.25.1) →
 [docs/10](docs/10-vllm-026-rebase.md) / [docs/11](docs/11-v026-feature-qualification.md)
 (0.26.0) → [docs/12](docs/12-dsv4-flash-0731-upgrade.md) (0731 weights) →
-[docs/13](docs/13-vllm-026-cand7.md) (cand7) → [docs/14](docs/14-vllm-027-c8r.md) (c8r).
+[docs/13](docs/13-vllm-026-cand7.md) (cand7) → [docs/14](docs/14-vllm-027-c8r.md) (c8r) →
+[docs/15](docs/15-tbfix-and-async-safety.md) (tbfix + guarded async lane).
 
 ---
 
@@ -322,6 +327,7 @@ chunk them. See `docs/12`.
 | [docs/12-dsv4-flash-0731-upgrade.md](docs/12-dsv4-flash-0731-upgrade.md) | The **DeepSeek-V4-Flash-0731 model upgrade** (2026-07-31): compatibility proof, the A/B gate numbers vs the preview, the two offline-cache traps, and the 0731 long-form deliberation trait. |
 | [docs/13-vllm-026-cand7.md](docs/13-vllm-026-cand7.md) | The **cand7 backport round** (2026-08-10): now the first image rollback rung; on-path pick selection, throughput-neutral gate, source-patch cache-root rule. |
 | [docs/14-vllm-027-c8r.md](docs/14-vllm-027-c8r.md) | The **c8r full-source 0.27-content promotion** (2026-08-11): main @48bada6ea4, overlay0261, #49731 revert, warm-gate TIE + larger KV pool, cold-cache lesson. |
+| [docs/15-tbfix-and-async-safety.md](docs/15-tbfix-and-async-safety.md) | The **c8r-tbfix promotion** and guarded async-scheduling qualification lane: root cause, rollback, deterministic W6 workloads, power capture, swap/memory aborts, and the current HOLD. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard — **legacy no-op on 0.26+/c8r** (zero readers in the installed package; the overlay handles the crash class itself), kept for 0.25.1-rollback compatibility. |
 
 ---
