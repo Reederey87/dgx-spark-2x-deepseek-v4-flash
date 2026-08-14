@@ -20,6 +20,8 @@ workload with a poisoned memory state.
 server's `/tokenize` endpoint. `power-sample.py` records both-node energy.
 `run-w6.sh` adds the operational safety envelope:
 
+- 60 continuous quiet seconds before W6, catching delayed swap writeback from
+  an opening eval, boot, or prior arm before workload attribution;
 - at least 2.25 GiB `MemAvailable` on each node before admission;
 - immediate abort below 1 GiB;
 - abort on a 4,096-page swap spike or three samples above 256 pages;
@@ -43,3 +45,7 @@ Repeat A/B/A with the same manifests and accept only if both workload profiles
 are non-inferior, all requests finish, energy per output token does not regress,
 and every safety tail stays clean. Re-enable the timers and normal traffic only
 after restoring the chosen profile and verifying both services.
+
+The pre-start quiet gate uses the same thresholds as the live workload: a
+4,096-page spike fails immediately, three samples above 256 pages fail, and a
+sample below the 2.25 GiB admission floor resets the required quiet interval.

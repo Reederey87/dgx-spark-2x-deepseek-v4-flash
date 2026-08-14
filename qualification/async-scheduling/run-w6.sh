@@ -63,6 +63,11 @@ for timer in vllm-dsv4-watchdog.timer vllm-metrics-watch.timer; do
   state="$(ssh -T "$CLUSTER_USER@$HEAD_HOST" "systemctl --user is-active $timer" 2>/dev/null | tr -d '\r' | sed -nE '/^(active|inactive|failed|activating|deactivating)$/p' | head -1 || true)"
   [ "$state" = inactive ] || { echo "FAIL: $timer is '$state'" >&2; exit 1; }
 done
+# An opening eval, boot, or prior arm can release swap writeback after its
+# requests finish. Require a full quiet interval before attributing pressure to
+# W6; a critical spike aborts here, before any workload request is sent.
+QUIET_EVIDENCE="${W6_QUIET_EVIDENCE:-$BENCH_DIR/results/${NS}__prestart-quiet.jsonl}"
+bash "$BENCH_DIR/wait-host-quiet.sh" "$QUIET_EVIDENCE" "$TEST_ID-W6-$PROFILE-prestart"
 # The opening eval ends with a long-context request and MemAvailable can take a
 # few samples to settle.  The 2.25 GiB default is below the measured healthy
 # prod idle band (2.39--2.48 GiB) but leaves 1.25 GiB before the independent
