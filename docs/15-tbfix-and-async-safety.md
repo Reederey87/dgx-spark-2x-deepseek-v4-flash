@@ -47,6 +47,11 @@ manifests, clean memory admission, both W6 workload profiles, both-node power,
 and a clean 60-second tail after each arm. The test must stop immediately on
 swap, low memory, service loss, fatal GPU logs, or missing telemetry.
 
+The harness also requires 60 continuous quiet seconds before W6 begins. This
+prevents delayed swap writeback from an opening evaluation, boot, or prior arm
+from being misattributed to the next workload; a critical spike stops the run
+before any W6 request is sent.
+
 ## Operations hardening
 
 `runtime/metrics-watch.sh` now separates harmless parked swap from active

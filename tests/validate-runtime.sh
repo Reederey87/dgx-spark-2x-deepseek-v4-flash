@@ -67,6 +67,9 @@ need 'INFO swap:' runtime/metrics-watch.sh
 need 'W6_TEST_WINDOW=1' qualification/async-scheduling/README.md
 need 'W6_SAFETY_TAIL_SECONDS' qualification/async-scheduling/run-w6.sh
 need 'swap delta exceeded 256 pages for three samples' qualification/async-scheduling/run-w6.sh
+need 'wait-host-quiet.sh' qualification/async-scheduling/run-w6.sh
+need 'QUIET_SECONDS="${QUIET_SECONDS:-60}"' qualification/async-scheduling/wait-host-quiet.sh
+need 'SWAP_IO_CRIT_PAGES="${SWAP_IO_CRIT_PAGES:-4096}"' qualification/async-scheduling/wait-host-quiet.sh
 need 'current candidate remains on HOLD' README.md
 need '--no-async-scheduling' runtime/docker-compose.dspark.yml
 need 'FlashInfer PR #3615' patches/flashinfer-pr3615/README.md
