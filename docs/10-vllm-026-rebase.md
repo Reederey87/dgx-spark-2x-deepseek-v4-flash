@@ -112,4 +112,7 @@ restart the pair. The 0.25.1 lane's build kit (`patches/vllm-pr47356-vgx10/`) an
 - **Upstream watch.** #50012 (the block-size guard) and #49927 (the numerics findings) are
   open; if upstream lands a warn-only guard or the acceptance fixes, the corresponding
   overlay pieces get dropped on the next rebase. The drafter-attention fix #48167 is already
-  in 0.26.0; `thinking_token_budget` remains unsupported on the V2 runner (same as 0.25.1).
+  in 0.26.0. On the 0.26 / c8r runners `thinking_token_budget` was ignored
+  (“Model Runner V2 does not yet support…”). The current **c8r-tbfix** production
+  image is the first lane that actually enforces it — see [docs/06](06-reasoning-mode.md)
+  and [docs/15](15-tbfix-and-async-safety.md).

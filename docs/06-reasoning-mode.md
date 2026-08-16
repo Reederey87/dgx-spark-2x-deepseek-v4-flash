@@ -13,7 +13,8 @@ sharp edges that cost a full day to trace, so they are documented here in detail
 - **The server thinks by default** (`DSPARK_REASONING=on`). Opt **out** per request with
   `chat_template_kwargs: {"thinking": false}`, or set `DSPARK_REASONING=off` to flip the whole server.
 - **Budget your `max_tokens`.** Reasoning is spent *before* the answer; a small cap truncates the model
-  mid-think and leaves `content` empty.
+  mid-think and leaves `content` empty. For a hard cap on *thinking only*, send
+  `thinking_token_budget` (see below) — do not flip the server to `reasoning_effort=low`.
 
 ## Activate it
 
@@ -57,12 +58,24 @@ greedy `temp 0` used for non-think. The `DSPARK_REASONING=on` path sets this for
 sampling off the greedy point the recipe was tuned at, **re-run `eval-cluster.sh` after switching** — the
 garble gate is the accept criterion.
 
-`reasoning_effort`: `high` (default) or `max`. `max` prepends a maximize-depth instruction and needs
-`--max-model-len >= 393216` (the 1M default clears it) — reserve it for low-concurrency calls.
+`reasoning_effort`: **`high` (the production default — keep it)** or `max`. `max` prepends a
+stronger maximize-depth instruction and needs `--max-model-len >= 393216` (the 1M default
+clears it) — reserve it for low-concurrency calls.
+
+⚠ **#50580 (already in the production pin) changed what `"high"` means.** Before that
+commit only `"max"` emitted a maximum-effort prefix; `"high"` emitted nothing. After it,
+`"high"` emits the *old max* text and `"max"` gets a new, stronger tier. `low` /
+`minimal` / `medium` all collapse to an empty prefix — there is no distinct medium rung.
+A 2026-08-15 A/B of `high` vs `low` showed `low` unblocking the python30 length-cap flake
+**and** failing the constrained short-story probe. This kit keeps `high`. Do not “fix”
+empty `content` by changing the server default; use `thinking_token_budget` instead
+([docs/16](16-post-pin-qualification.md)).
+
 ⚠ **The wrapper's effort mapping is coarse and lane-dependent** (`vllm/tokenizers/deepseek_v4.py`):
-- **c8r lane (current, main @48bada6ea4):** `none` turns thinking off, `max` is `max`,
+- **c8r / c8r-tbfix (current, main @48bada6ea4):** `none` turns thinking off, `max` is `max`,
   `low`/`minimal`/`medium` map to `low`, and **any other string — including `xhigh` —
-  silently runs as `high`.**
+  silently runs as `high`.** `preflight.sh` only accepts `high` or `max` as the *server*
+  default.
 - **cand7 rollback lane (vendored 0.26):** only `none` / `max` / `xhigh` are special-cased —
   **any other string, including `low` and `medium`, silently runs as `high`.** A `low` ask is
   not an error there, it just isn't low.
@@ -80,6 +93,39 @@ reasoning block. A `max_tokens` sized for a short answer truncates mid-think:
 
 Always give thinking calls generous headroom. (This is why the long-context needle in `eval-cluster.sh`
 uses `max_tokens: 1024`, not the 64 that suffices for non-think.)
+
+## `thinking_token_budget` — the per-request think cap (c8r-tbfix)
+
+`max_tokens` caps **everything** (think + answer + tool markup). `thinking_token_budget`
+caps only the reasoning portion and forces a single end-of-think marker, leaving the rest
+of `max_tokens` for the visible answer. A budget of `0` disables reasoning for that one
+call. Natural end-of-think is left alone.
+
+This is **opt-in per request**. The server injects no default. That is deliberate: the
+stock sampler fast path stays in place when the field is omitted.
+
+On **c8r-tbfix** (current production) the budget is actually enforced at the default
+V4-Flash sampling point (`temperature=1`, `top_p=1`). On the older c8r image — and on
+every 0.26 / 0.25 rollback — Model Runner V2 logged that the parameter was unsupported
+and ignored it. Do not send a budget and assume it worked unless you are on tbfix.
+
+```bash
+curl -s http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' -d '{
+    "model": "deepseek-v4-flash-dspark",
+    "messages": [{"role": "user", "content": "Write a 30-line Python validator."}],
+    "max_tokens": 8192,
+    "thinking_token_budget": 2048,
+    "temperature": 1.0, "top_p": 1.0,
+    "chat_template_kwargs": {"thinking": true, "reasoning_effort": "high"}
+}' | jq '{finish: .choices[0].finish_reason,
+         content_empty: (.choices[0].message.content == null),
+         completion_tokens: .usage.completion_tokens}'
+```
+
+Keep `max_tokens` comfortably above the thinking budget. `finish=length` plus empty
+`content` still means think ate the cap — raise the budget or `max_tokens`, or chunk
+the ask. Tool-use traffic almost never needs this.
 
 ## Tool calling and multi-turn
 

@@ -52,6 +52,10 @@ prevents delayed swap writeback from an opening evaluation, boot, or prior arm
 from being misattributed to the next workload; a critical spike stops the run
 before any W6 request is sent.
 
+The 2026-08-15 post-pin round (later `main` + #51739, `reasoning_effort=low`,
+#47808) likewise left production on this tbfix image. See
+[docs/16](16-post-pin-qualification.md).
+
 ## Operations hardening
 
 `runtime/metrics-watch.sh` now separates harmless parked swap from active

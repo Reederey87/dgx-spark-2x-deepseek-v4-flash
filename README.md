@@ -25,15 +25,17 @@ Name decoder (this kit's jargon, used throughout):
 - **c8r-tbfix** — current production: c8r plus the thinking-budget fast-path fix; receipt [docs/15](docs/15-tbfix-and-async-safety.md).
 - **cand7 / cand4** — the 0.26.0 thin-overlay image lanes, now the first rollback rungs.
 
-**Current production stack (2026-08-12):** full-source vLLM **main @48bada6ea4**
+**Current production stack (still current 2026-08-16):** full-source vLLM **main @48bada6ea4**
 (0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert + the
 thinking-budget fast-path fix → image `vllm-dspark-runtime:v0261-main-c8r-tbfix`, built by
 [patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/) and
 [patches/vllm-0261-main-tbfix/](patches/vllm-0261-main-tbfix/). Weights:
 [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
 at revision `9e165c30e2704aec5d9d593cce3eebd58bbef1cb`. KV pool **3,027,217 tokens** at
-the pinned 19.85 GiB budget. Receipts: [docs/14](docs/14-vllm-027-c8r.md) and
-[docs/15](docs/15-tbfix-and-async-safety.md).
+the pinned 19.85 GiB budget. A 2026-08-15 qualification of the next three candidates
+(later `main` + #51739, `reasoning_effort=low`, #47808 adaptive verify) left this
+stack in place — [docs/16](docs/16-post-pin-qualification.md). Receipts:
+[docs/14](docs/14-vllm-027-c8r.md) and [docs/15](docs/15-tbfix-and-async-safety.md).
 
 **0731 is the official V4-Flash release** (2026-07-31), superseding the
 `DeepSeek-V4-Flash-DSpark` preview. Same checkpoint family, same ~155.4 GiB footprint,
@@ -296,8 +298,12 @@ Upgrade evidence: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 One 0731 quirk worth knowing: give it a prompt with a **numeric length constraint** or a
 very long single-shot ask, and it will word-count and re-draft inside its thinking —
 coherent, not garble — until the budget runs out. Tight `max_tokens` caps will truncate
-the answer. Tool-use and agentic traffic never notice; for long-form asks, leave room or
-chunk them. See `docs/12`.
+the answer (`content: null`, `finish=length`). Tool-use and agentic traffic never notice.
+For long-form asks, leave room, chunk them, or send a request-level
+`thinking_token_budget` (enforced on this tbfix image — see
+[docs/06](docs/06-reasoning-mode.md)). Do **not** flip the server to
+`reasoning_effort=low` to paper over it; that was measured and rejected
+([docs/16](docs/16-post-pin-qualification.md)). Background: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 
 `eval-cluster.sh` prints the composite plus the throughput/latency probes in one run;
 `SKIP_TTFT=1 SKIP_LATENCY=1` skips the two slow streaming probes. History:
@@ -305,7 +311,8 @@ chunk them. See `docs/12`.
 [docs/10](docs/10-vllm-026-rebase.md) / [docs/11](docs/11-v026-feature-qualification.md)
 (0.26.0) → [docs/12](docs/12-dsv4-flash-0731-upgrade.md) (0731 weights) →
 [docs/13](docs/13-vllm-026-cand7.md) (cand7) → [docs/14](docs/14-vllm-027-c8r.md) (c8r) →
-[docs/15](docs/15-tbfix-and-async-safety.md) (tbfix + guarded async lane).
+[docs/15](docs/15-tbfix-and-async-safety.md) (tbfix + guarded async lane) →
+[docs/16](docs/16-post-pin-qualification.md) (post-pin candidates measured, default unchanged).
 
 ---
 
@@ -328,6 +335,7 @@ chunk them. See `docs/12`.
 | [docs/13-vllm-026-cand7.md](docs/13-vllm-026-cand7.md) | The **cand7 backport round** (2026-08-10): now the first image rollback rung; on-path pick selection, throughput-neutral gate, source-patch cache-root rule. |
 | [docs/14-vllm-027-c8r.md](docs/14-vllm-027-c8r.md) | The **c8r full-source 0.27-content promotion** (2026-08-11): main @48bada6ea4, overlay0261, #49731 revert, warm-gate TIE + larger KV pool, cold-cache lesson. |
 | [docs/15-tbfix-and-async-safety.md](docs/15-tbfix-and-async-safety.md) | The **c8r-tbfix promotion** and guarded async-scheduling qualification lane: root cause, rollback, deterministic W6 workloads, power capture, swap/memory aborts, and the current HOLD. |
+| [docs/16-post-pin-qualification.md](docs/16-post-pin-qualification.md) | **2026-08-15:** later `main` + #51739, `reasoning_effort=low`, and #47808 adaptive verify were measured and **left off** the default. How to use `thinking_token_budget` instead. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard — **legacy no-op on 0.26+/c8r** (zero readers in the installed package; the overlay handles the crash class itself), kept for 0.25.1-rollback compatibility. |
 
 ---
