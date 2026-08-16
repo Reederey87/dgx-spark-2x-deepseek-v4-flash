@@ -91,8 +91,15 @@ repetition loops, no markup leaks; garble score 1.00) and it does not affect
 tool-use/agentic traffic — but:
 
 - give requests a generous `max_tokens` (the same trap class as `docs/06`'s thinking
-  budget note), and
+  budget note),
+- on **c8r-tbfix**, send a request-level `thinking_token_budget` when you need a hard
+  think cap without dropping `reasoning_effort` (see [docs/06](06-reasoning-mode.md)), and
 - for long-form outputs, prefer chunking or explicit structure over one giant ask.
+
+A 2026-08-15 A/B showed this trait is **amplified** by vLLM #50580 (already in the
+production pin): `"high"` now emits the old maximum-effort prefix. Switching the
+server to `low` unblocks python30 and fails the constrained short-story probe.
+Keep `DSPARK_REASONING_EFFORT=high`. Details: [docs/16](16-post-pin-qualification.md).
 
 The eval's concurrency3 probe dropped its numeric length constraint for exactly this
 reason — the probe exists to test concurrency + garble, not constraint compliance.
