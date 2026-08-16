@@ -120,19 +120,19 @@ image remains a supported rollback if you need a faster rebuild path.
                                      |
                  ssh $HEAD_HOST      |      ssh $WORKER_HOST   (mDNS / SSH-alias names)
               ┌──────────────────────┴──────────────────────┐
-              |                                              |
+              |                                             |
    ┌──────────────────────┐                      ┌──────────────────────┐
-   │  HEAD  (rank 0)       │                      │  WORKER (rank 1)      │
-   │  DGX Spark · GB10     │                      │  DGX Spark · GB10     │
-   │  ~121 GiB unified mem │                      │  ~121 GiB unified mem │
-   │                       │                      │                       │
-   │  vLLM serve           │   QSFP 200GbE cable  │  vLLM serve --headless│
-   │  --node-rank 0        │◄════════════════════►│  --node-rank 1        │
-   │                       │  rail 1: 192.168.177 │                       │
-   │  OpenAI API           │  rail 2: 192.168.178 │  (no API listener)    │
-   │  127.0.0.1:8000 ◄──┐  │  MTU 9000, dual-twin │                       │
-   └────────────────────┼──┘   RoCEv2 / NCCL      └──────────────────────┘
-                        │        TP=2, mp backend, rendezvous on HEAD_R1:25000
+   │  HEAD  (rank 0)      │                      │  WORKER (rank 1)     │
+   │  DGX Spark · GB10    │                      │  DGX Spark · GB10    │
+   │ ~121 GiB unified mem │                      │ ~121 GiB unified mem │
+   │                      │                      │                      │
+   │  vLLM serve          │   QSFP 200GbE cable  │ vLLM serve --headless│
+   │  --node-rank 0       │◄════════════════════►│  --node-rank 1       │
+   │                      │  rail 1: 192.168.177 │                      │
+   │  OpenAI API          │  rail 2: 192.168.178 │  (no API listener)   │
+   │  127.0.0.1:8000 ◄─┐  │  MTU 9000, dual-twin │                      │
+   └───────────────────┼──┘   RoCEv2 / NCCL      └──────────────────────┘
+                       │        TP=2, mp backend, rendezvous on HEAD_R1:25000
               your clients (loopback only by default)
 ```
 
