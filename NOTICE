@@ -6,10 +6,14 @@ Licensed under the Apache License, Version 2.0 (see LICENSE).
 This project is deployment/orchestration tooling. It does NOT redistribute the
 model weights, the serving container image, or the upstream kernel packages it
 builds on — those are pulled at build time from their own repositories, each
-under its own license. One exception: patches/vllm-0261-main-c8r/overlay0261/
+under its own license. Two exceptions: patches/vllm-0261-main-c8r/overlay0261/
 redistributes modified copies of 17 vLLM source files (Apache-2.0; upstream
 SPDX license headers retained in each file) as the reviewable GB10 overlay
-applied at image build. Everything else this project orchestrates and documents.
+applied at image build, and the derivative kits patches/vllm-0261-main-ixfix/,
+patches/vllm-0261-main-c128arev/ and patches/vllm-0261-main-smpcache/ each
+redistribute one further modified vLLM source file (same license, same
+headers) carrying a cherry-picked upstream fix. Everything else this project
+orchestrates and documents.
 
 Attributed upstreams:
 

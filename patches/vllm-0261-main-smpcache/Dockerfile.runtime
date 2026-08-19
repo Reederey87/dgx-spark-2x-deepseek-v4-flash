@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# Lane C (#52329 MRV2 cached logits-processing request state — retires the tbfix file).
+ARG VLLM_BASE=vllm-dspark-runtime:v0261-main-c8r-tbfix-ixfix-c128arev
+ARG VLLM_PKG_DIR=/usr/local/lib/python3.12/dist-packages/vllm
+FROM ${VLLM_BASE}
+ARG VLLM_PKG_DIR
+LABEL org.opencontainers.image.source="https://github.com/Reederey87/dgx-spark-2x-deepseek-v4-flash"
+LABEL org.opencontainers.image.description="PR #52329 MRV2 cached needs_logits_processing (upstream-subsumes tbfix)"
+COPY sampler.py ${VLLM_PKG_DIR}/v1/worker/gpu/sample/sampler.py
+RUN python3 -m py_compile ${VLLM_PKG_DIR}/v1/worker/gpu/sample/sampler.py && \
+    ! grep -q '_requires_logits_processing' ${VLLM_PKG_DIR}/v1/worker/gpu/sample/sampler.py && \
+    grep -q 'needs_logits_processing' ${VLLM_PKG_DIR}/v1/worker/gpu/sample/sampler.py && \
+    grep -q 'use_thinking_budget' ${VLLM_PKG_DIR}/v1/worker/gpu/sample/sampler.py

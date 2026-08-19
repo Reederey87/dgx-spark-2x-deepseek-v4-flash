@@ -37,3 +37,6 @@ runtime/.xid-test-*
 .DS_Store
 *.swp
 *~
+
+# Python bytecode caches from local test/validation runs.
+__pycache__/

@@ -1,5 +1,13 @@
 # c8r thinking-budget fast-path fix
 
+> **Superseded 2026-08-19** as the top layer: upstream PR #52329 (carried by
+> [patches/vllm-0261-main-smpcache/](../vllm-0261-main-smpcache/)) folds the
+> thinking-budget term into upstream's cached `needs_logits_processing`
+> predicate, so current production no longer applies this patch. The kit stays —
+> it is rollback rung 0c and a middle layer of the full build chain
+> (`bringup/05-build-image.sh`).
+
+
 This is a small, reproducible runtime layer over
 `vllm-dspark-runtime:v0261-main-c8r`. It changes only
 `vllm/v1/worker/gpu/sample/sampler.py`.
