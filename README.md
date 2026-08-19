@@ -12,7 +12,7 @@ In a hurry? → [Quickstart](#quickstart).
 > number is an observation, not a guarantee; yours will vary. The full-source image build is
 > multi-hour nvcc with serving stopped. Throughput tables are short-context; decode rate at
 > 500K+ context is unmeasured on this lane (`runtime/bench-decode-depth.py` closes that).
-> The DSpark/GB10 stack is fast-moving and largely single-author. The current c8r-tbfix lane
+> The DSpark/GB10 stack is fast-moving and largely single-author. The current smpcache lane
 > builds from source (the FlashInfer wheel and the PyTorch builder base image are the
 > prebuilt exceptions); the older rollback lanes (0.25.1, 0.21.x) additionally depend on
 > prebuilt, non-source-buildable kernels and images.
@@ -22,20 +22,24 @@ Name decoder (this kit's jargon, used throughout):
 - **gx10** — the community GB10 port lineage this kit builds on (anemll's `dspark-vllm-gx10` overlay).
 - **DSpark** — DeepSeek's speculative-decoding draft-head family used by V4-Flash (also the name of the preview checkpoint).
 - **c8r** — the full-source vLLM `main` @48bada6ea4 base, i.e. "0.27-content"; receipt [docs/14](docs/14-vllm-027-c8r.md).
-- **c8r-tbfix** — current production: c8r plus the thinking-budget fast-path fix; receipt [docs/15](docs/15-tbfix-and-async-safety.md).
-- **cand7 / cand4** — the 0.26.0 thin-overlay image lanes, now the first rollback rungs.
+- **c8r-tbfix** — c8r plus the thinking-budget fast-path fix; receipt [docs/15](docs/15-tbfix-and-async-safety.md).
+- **smpcache** — current production: c8r-tbfix plus three gated one-file upstream-fix layers (ixfix = #52492, c128arev = #51318, smpcache = #52329, the last upstream-subsuming tbfix); receipt [docs/17](docs/17-postpin-upstream-round2.md).
+- **cand7 / cand4** — the 0.26.0 thin-overlay image lanes, now deeper rollback rungs.
 
-**Current production stack (still current 2026-08-16):** full-source vLLM **main @48bada6ea4**
-(0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert + the
-thinking-budget fast-path fix → image `vllm-dspark-runtime:v0261-main-c8r-tbfix`, built by
-[patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/) and
-[patches/vllm-0261-main-tbfix/](patches/vllm-0261-main-tbfix/). Weights:
+**Current production stack (still current 2026-08-19):** full-source vLLM **main @48bada6ea4**
+(0.27-content) + the gx10 GB10 overlay + a measured-neutral #49731 revert + four gated
+one-file derivative layers (tbfix → ixfix → c128arev → smpcache) → image
+`vllm-dspark-runtime:v0261-main-c8r-tbfix-ixfix-c128arev-smpcache`, built by
+[patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/) and the derivative kits under
+[patches/](patches/). Weights:
 [`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
 at revision `9e165c30e2704aec5d9d593cce3eebd58bbef1cb`. KV pool **3,027,217 tokens** at
-the pinned 19.85 GiB budget. A 2026-08-15 qualification of the next three candidates
-(later `main` + #51739, `reasoning_effort=low`, #47808 adaptive verify) left this
-stack in place — [docs/16](docs/16-post-pin-qualification.md). Receipts:
-[docs/14](docs/14-vllm-027-c8r.md) and [docs/15](docs/15-tbfix-and-async-safety.md).
+the pinned 19.85 GiB budget. The 2026-08-18/19 post-pin round A/B-tested four upstream
+candidates from the vLLM `main` delta and promoted the three silent-corruption/hygiene
+fixes on non-inferiority (C1 a repeatable small win on c128arev) —
+[docs/17](docs/17-postpin-upstream-round2.md). Receipts:
+[docs/14](docs/14-vllm-027-c8r.md), [docs/15](docs/15-tbfix-and-async-safety.md),
+[docs/16](docs/16-post-pin-qualification.md).
 
 **0731 is the official V4-Flash release** (2026-07-31), superseding the
 `DeepSeek-V4-Flash-DSpark` preview. Same checkpoint family, same ~155.4 GiB footprint,
@@ -101,7 +105,9 @@ Everything you need is **public — no accounts, no tokens, anywhere**:
   [`deepseek-ai/DeepSeek-V4-Flash-DSpark`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-DSpark).)
 - **Serving image:** full-source build of upstream vLLM `main` @ `48bada6ea4` + the
   overlay in this repo ([patches/vllm-0261-main-c8r/](patches/vllm-0261-main-c8r/)) + the
-  small thinking-budget layer ([patches/vllm-0261-main-tbfix/](patches/vllm-0261-main-tbfix/)).
+  four one-file derivative layers ([patches/vllm-0261-main-tbfix/](patches/vllm-0261-main-tbfix/),
+  [-ixfix/](patches/vllm-0261-main-ixfix/), [-c128arev/](patches/vllm-0261-main-c128arev/),
+  [-smpcache/](patches/vllm-0261-main-smpcache/)).
   First rollback is the thinner official `vllm/vllm-openai:v0.26.0` + cand7 overlay
   ([patches/vllm-026-rebase/](patches/vllm-026-rebase/)).
 - **Path:** clone → `bringup/00–09` → `runtime/cluster.env` from the example → systemd.
@@ -120,19 +126,19 @@ image remains a supported rollback if you need a faster rebuild path.
                                      |
                  ssh $HEAD_HOST      |      ssh $WORKER_HOST   (mDNS / SSH-alias names)
               ┌──────────────────────┴──────────────────────┐
-              |                                              |
+              |                                             |
    ┌──────────────────────┐                      ┌──────────────────────┐
-   │  HEAD  (rank 0)       │                      │  WORKER (rank 1)      │
-   │  DGX Spark · GB10     │                      │  DGX Spark · GB10     │
-   │  ~121 GiB unified mem │                      │  ~121 GiB unified mem │
-   │                       │                      │                       │
-   │  vLLM serve           │   QSFP 200GbE cable  │  vLLM serve --headless│
-   │  --node-rank 0        │◄════════════════════►│  --node-rank 1        │
-   │                       │  rail 1: 192.168.177 │                       │
-   │  OpenAI API           │  rail 2: 192.168.178 │  (no API listener)    │
-   │  127.0.0.1:8000 ◄──┐  │  MTU 9000, dual-twin │                       │
-   └────────────────────┼──┘   RoCEv2 / NCCL      └──────────────────────┘
-                        │        TP=2, mp backend, rendezvous on HEAD_R1:25000
+   │  HEAD  (rank 0)      │                      │  WORKER (rank 1)     │
+   │  DGX Spark · GB10    │                      │  DGX Spark · GB10    │
+   │ ~121 GiB unified mem │                      │ ~121 GiB unified mem │
+   │                      │                      │                      │
+   │  vLLM serve          │   QSFP 200GbE cable  │ vLLM serve --headless│
+   │  --node-rank 0       │◄════════════════════►│  --node-rank 1       │
+   │                      │  rail 1: 192.168.177 │                      │
+   │  OpenAI API          │  rail 2: 192.168.178 │  (no API listener)   │
+   │  127.0.0.1:8000 ◄─┐  │  MTU 9000, dual-twin │                      │
+   └───────────────────┼──┘   RoCEv2 / NCCL      └──────────────────────┘
+                       │        TP=2, mp backend, rendezvous on HEAD_R1:25000
               your clients (loopback only by default)
 ```
 
@@ -231,7 +237,7 @@ that compose reads. The full vLLM serve argv lives only in `runtime/docker-compo
 | `MTP_NUM_TOKENS` | `2` | DSpark speculative draft length — the current sweet spot: **+3.8% single-stream decode vs `3`, concurrency-8 tie** (measured, see `docs/11`). `3` is a fine fallback; greedy `5` is unsafe (garble risk, see `docs/03`). |
 | `MAX_CUDAGRAPH_CAPTURE_SIZE` | `72` | Keeps the spec-decode decode path graphed at concurrency. Derive as `MAX_NUM_SEQS × (MTP_NUM_TOKENS + 1) × 2` (cap 512) — `72 = 12 × (2+1) × 2`. See `docs/08`. |
 | `VLLM_USE_BREAKABLE_CUDAGRAPH` | `1` | The supported CUDA-graph route for this model. **Keep `1`.** See `docs/08`. |
-| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-tbfix` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). Every source derivative gets isolated generated-cache roots; see `docs/14`–`docs/15`. |
+| `TRITON_CACHE_DIR` | `/cache/huggingface/triton-cache-smpcache` | Triton kernel cache **must** live on the persistent HF-cache bind — unset falls to container-ephemeral storage and cold-recompiles on every recreate (see `docs/07`). Every source derivative gets isolated generated-cache roots; see `docs/14`–`docs/17`. |
 | `SHUTDOWN_TIMEOUT` | `30` | vLLM engine grace period for in-flight requests after SIGTERM. The systemd units provide 90 s total stop headroom. |
 | `GLOO_SOCKET_IFNAME` | `enp1s0f1np1` | Pins the CPU-side Gloo coordination group to the stable QSFP control rail; normally matches `NCCL_SOCKET_IFNAME`. |
 | `LONG_PREFILL_TOKEN_THRESHOLD` | `4096` | Caps each running long-prefill chunk so short requests interleave — the prefill head-of-line fix. `0`/unset disables it (short-request TTFT regresses under long prefills). See `docs/07`. |
@@ -251,7 +257,9 @@ post-request swap activity; see [docs/15](docs/15-tbfix-and-async-safety.md).
 All measured on our own 2× GB10 pair (`GPU_MEMORY_UTILIZATION=0.85`, `DSPARK_REASONING=on`).
 Treat these as **observations, not guarantees** — yours will vary.
 
-**DeepSeek-V4-Flash-0731 on c8r-tbfix (current; c8r warm throughput reference):**
+**DeepSeek-V4-Flash-0731 on smpcache (current; c8r warm throughput reference — the three
+2026-08-18/19 derivative layers each gated non-inferior against it, see
+[docs/17](docs/17-postpin-upstream-round2.md)):**
 
 | Metric | Result |
 |---|---|
@@ -259,11 +267,11 @@ Treat these as **observations, not guarantees** — yours will vary.
 | Throughput — aggregate @ concurrency 8 (C8) | **87.78 tok/s** mean (6 batches; +0.11% vs same-day cand7, Welch TIE) |
 | Spec-decode acceptance (eval) | **0.800** mean draft length 1.60 (draft len 2, probabilistic) |
 | Bench acceptance | **0.495 / 0.490** (flat vs cand7) |
-| Deep-context retrieval | **3/3 needle HITs @ ~944K** (prior 0731 gate; c8 arm reconfirmed) |
+| Deep-context retrieval | **3/3 needle HITs @ ~944K** (reconfirmed on both arms of the ixfix/c128arev gates) |
 | KV cache pool | **3,027,217 tokens** (same 19.85 GiB pin as cand7; **+2.7%** via #48993 packing) — ~**2.89×** concurrent @ 1M |
-| Serving image | `vllm-dspark-runtime:v0261-main-c8r-tbfix` — c8r plus the thinking-budget fast-path fix; see [docs/14](docs/14-vllm-027-c8r.md) and [docs/15](docs/15-tbfix-and-async-safety.md) |
+| Serving image | `vllm-dspark-runtime:v0261-main-c8r-tbfix-ixfix-c128arev-smpcache` — c8r plus the four derivative layers; see [docs/14](docs/14-vllm-027-c8r.md), [docs/15](docs/15-tbfix-and-async-safety.md), [docs/17](docs/17-postpin-upstream-round2.md) |
 | Dependencies | main's pins at the SHA (FlashInfer **0.6.16.post3**, b12x lineage, torch/CUDA from the stage-1 Dockerfile) + DeepGEMM rebuild at the 0.26-class SM120 pin |
-| Rollback | image: `v0261-main-c8r` + `-c8r` roots (immediate), then `v026-gx10-cand7-backports` + `-cand7` roots, cand4, and `vgx10-011-pr47356`; weights: flip `DSPARK_MODEL` and `DSPARK_REVISION` to the preview |
+| Rollback | image: `v0261-main-c8r-tbfix-ixfix-c128arev` + `-c128arev` roots (immediate), then `-ixfix` / `-tbfix` / `v0261-main-c8r` + their roots, then `v026-gx10-cand7-backports` + `-cand7` roots, cand4, and `vgx10-011-pr47356`; weights: flip `DSPARK_MODEL` and `DSPARK_REVISION` to the preview |
 
 > ⚠️ **These are short-context numbers.** Every C1/C8 throughput figure above was measured
 > at prompts of a few K tokens; **decode rate at 500K+ context is unmeasured on this
@@ -300,8 +308,9 @@ very long single-shot ask, and it will word-count and re-draft inside its thinki
 coherent, not garble — until the budget runs out. Tight `max_tokens` caps will truncate
 the answer (`content: null`, `finish=length`). Tool-use and agentic traffic never notice.
 For long-form asks, leave room, chunk them, or send a request-level
-`thinking_token_budget` (enforced on this tbfix image — see
-[docs/06](docs/06-reasoning-mode.md)). Do **not** flip the server to
+`thinking_token_budget` (enforced on the current image — the #52329 smpcache layer
+carries the tbfix term in upstream's cached predicate; see
+[docs/06](docs/06-reasoning-mode.md) and [docs/17](docs/17-postpin-upstream-round2.md)). Do **not** flip the server to
 `reasoning_effort=low` to paper over it; that was measured and rejected
 ([docs/16](docs/16-post-pin-qualification.md)). Background: [docs/12](docs/12-dsv4-flash-0731-upgrade.md).
 
@@ -312,7 +321,9 @@ For long-form asks, leave room, chunk them, or send a request-level
 (0.26.0) → [docs/12](docs/12-dsv4-flash-0731-upgrade.md) (0731 weights) →
 [docs/13](docs/13-vllm-026-cand7.md) (cand7) → [docs/14](docs/14-vllm-027-c8r.md) (c8r) →
 [docs/15](docs/15-tbfix-and-async-safety.md) (tbfix + guarded async lane) →
-[docs/16](docs/16-post-pin-qualification.md) (post-pin candidates measured, default unchanged).
+[docs/16](docs/16-post-pin-qualification.md) (post-pin candidates measured, default unchanged) →
+[docs/17](docs/17-postpin-upstream-round2.md) (post-pin round 2: ixfix/c128arev/smpcache
+promoted, prefix-retention HOLD).
 
 ---
 
@@ -336,6 +347,7 @@ For long-form asks, leave room, chunk them, or send a request-level
 | [docs/14-vllm-027-c8r.md](docs/14-vllm-027-c8r.md) | The **c8r full-source 0.27-content promotion** (2026-08-11): main @48bada6ea4, overlay0261, #49731 revert, warm-gate TIE + larger KV pool, cold-cache lesson. |
 | [docs/15-tbfix-and-async-safety.md](docs/15-tbfix-and-async-safety.md) | The **c8r-tbfix promotion** and guarded async-scheduling qualification lane: root cause, rollback, deterministic W6 workloads, power capture, swap/memory aborts, and the current HOLD. |
 | [docs/16-post-pin-qualification.md](docs/16-post-pin-qualification.md) | **2026-08-15:** later `main` + #51739, `reasoning_effort=low`, and #47808 adaptive verify were measured and **left off** the default. How to use `thinking_token_budget` instead. |
+| [docs/17-postpin-upstream-round2.md](docs/17-postpin-upstream-round2.md) | **2026-08-18/19:** the second post-pin upstream survey (89-commit delta) — #52492 (ixfix), #51318 (c128arev) and #52329 (smpcache, retires tbfix) **promoted** on gated non-inferiority; prefix-cache retention 4096 on HOLD; the deferred/rejected list. |
 | [docs/LONG_CONTEXT_CRASH_FIX.md](docs/LONG_CONTEXT_CRASH_FIX.md) | The `DSPARK_SLOT_CLAMP` long-context crash guard — **legacy no-op on 0.26+/c8r** (zero readers in the installed package; the overlay handles the crash class itself), kept for 0.25.1-rollback compatibility. |
 
 ---
@@ -343,9 +355,10 @@ For long-form asks, leave room, chunk them, or send a request-level
 ## License & attribution
 
 Licensed under Apache-2.0 (see [LICENSE](LICENSE)). This kit is orchestration and documentation
-plus one reviewable source overlay: `patches/vllm-0261-main-c8r/overlay0261/` carries modified
+plus reviewable source overlays: `patches/vllm-0261-main-c8r/overlay0261/` carries modified
 copies of 17 vLLM files (Apache-2.0, upstream SPDX headers retained) that the image build lays
-over the pinned upstream tree; the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
+over the pinned upstream tree, and the derivative kits (`patches/vllm-0261-main-ixfix/`,
+`-c128arev/`, `-smpcache/`) each carry one further modified vLLM file; the weights are pulled from Hugging Face at deploy time. Upstream components (vLLM, the model weights,
 the recipe/image, and the GB10 kernels) each ship under their own licenses; see [NOTICE](NOTICE) for
 the attribution required by those licenses. Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 

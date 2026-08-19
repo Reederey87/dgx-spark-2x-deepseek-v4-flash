@@ -1,5 +1,11 @@
 # Post-pin qualification (2026-08-15) — production stays c8r-tbfix
 
+> **Dated 2026-08-15.** Production moved on 2026-08-18/19 to the
+> `c8r-tbfix-ixfix-c128arev-smpcache` image — see
+> [docs/17](17-postpin-upstream-round2.md). This page's "unchanged production"
+> table describes the 2026-08-15 state; its three negative results still stand.
+
+
 This is a **negative result that belongs in the recipe**. After the 2026-08-12
 c8r-tbfix promotion, three tempting next steps were measured on the same 2× GB10
 pair. **None of them became the default.** The serving image, knobs, and

@@ -31,23 +31,28 @@ fi
 uv run python -m unittest discover -s tests -p 'test_*.py'
 echo "ok: offline unit tests"
 
-# Production defaults: full-source c8r plus the thinking-budget fix (docs/14-15).
+# Production defaults: full-source c8r plus the four derivative layers (docs/14-17).
 need 'DSPARK_VLLM_BASE_IMAGE=vllm-dspark-src:v0261-main-c8' runtime/cluster.env.example
-need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v0261-main-c8r-tbfix' runtime/cluster.env.example
-need 'DSPARK_VLLM_ROLLBACK_IMAGE=vllm-dspark-runtime:v0261-main-c8r' runtime/cluster.env.example
-need 'vllm-dspark-runtime:v0261-main-c8r-tbfix' runtime/docker-compose.dspark.yml
+need 'DSPARK_VLLM_IMAGE=vllm-dspark-runtime:v0261-main-c8r-tbfix-ixfix-c128arev-smpcache' runtime/cluster.env.example
+need 'DSPARK_VLLM_ROLLBACK_IMAGE=vllm-dspark-runtime:v0261-main-c8r-tbfix-ixfix-c128arev' runtime/cluster.env.example
+need 'vllm-dspark-runtime:v0261-main-c8r-tbfix-ixfix-c128arev-smpcache' runtime/docker-compose.dspark.yml
 need '48bada6ea4' patches/vllm-0261-main-c8r/README.md
 need 'current production image recipe' patches/vllm-0261-main-c8r/README.md
 need 'overlay0261' patches/vllm-0261-main-c8r/README.md
 # Every source derivative keeps isolated generated caches.
-need 'vllm-cache-tbfix' runtime/docker-compose.dspark.yml
-need 'flashinfer-tbfix' runtime/docker-compose.dspark.yml
-need 'triton-cache-tbfix' runtime/cluster.env.example
-need 'tilelang-tbfix' runtime/cluster.env.example
-need 'triton-cache-tbfix' runtime/render-env.sh
+need 'vllm-cache-smpcache' runtime/docker-compose.dspark.yml
+need 'flashinfer-smpcache' runtime/docker-compose.dspark.yml
+need 'triton-cache-smpcache' runtime/cluster.env.example
+need 'tilelang-smpcache' runtime/cluster.env.example
+need 'triton-cache-smpcache' runtime/render-env.sh
 need 'use_thinking_budget' patches/vllm-0261-main-tbfix/apply-thinking-budget-fix.py
 need 'expected exactly one pinned sampler fast path' patches/vllm-0261-main-tbfix/apply-thinking-budget-fix.py
-need 'FINAL_TAG="${DSPARK_VLLM_ROLLBACK_IMAGE' bringup/05-build-image.sh
+need 'is_current_stream_capturing' patches/vllm-0261-main-ixfix/attention.py
+need 'global_decode_buffer.stride(0)' patches/vllm-0261-main-c128arev/sparse_mla.py
+need 'needs_logits_processing' patches/vllm-0261-main-smpcache/sampler.py
+need 'use_thinking_budget' patches/vllm-0261-main-smpcache/sampler.py
+need 'patches/vllm-0261-main-smpcache/build-and-distribute.sh' bringup/05-build-image.sh
+need 'FINAL_TAG="$C8R_TAG"' bringup/05-build-image.sh
 # cand7 remains the first image rollback rung (prior build script + docs/13).
 need 'v026-gx10-cand7-backports' runtime/cluster.env.example
 need 'cand7 lane' patches/vllm-026-rebase/README.md
